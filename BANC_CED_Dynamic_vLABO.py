@@ -4,14 +4,9 @@ import os
 import sys
 import dill
 import traceback
-import matplotlib.colors
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 
 import pyqtgraph as pg
-
-matplotlib.use('Qt5Agg')
 from PyQt5.QtWidgets import (QApplication,
                              QMainWindow,
                              QLabel,
@@ -41,7 +36,7 @@ from PyQt5.QtWidgets import (QApplication,
 
 from PyQt5.QtCore import QAbstractTableModel, Qt, QModelIndex,QTimer
 from PyQt5.QtGui import QColor, QFont
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas, NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from datetime import datetime
 
 import copy
@@ -302,6 +297,19 @@ class MainWindow(QMainWindow):
         self.Spectrum = None
         self.variables = Variables()
         self.RUN = None
+
+        # États init pour éviter les accès à des attributs non initialisés
+        self.bit_dP = 0
+        self.Pstart = 0.0
+        self.Pend = 0.0
+        self.tstart = 0.0
+        self.tend = 0.0
+        self.x1 = 0.0
+        self.y1 = 0.0
+        self.x5 = 0.0
+        self.y3 = 0.0
+        self.x_clic = 0.0
+        self.y_clic = 0.0
 
         # Chemin de base
         if folder_start is None:
@@ -911,8 +919,8 @@ class MainWindow(QMainWindow):
         self.curves_dPdt = []
         self.curves_sigma = []
         self.curves_T = []
-        self.curve_piezo = None
-        self.curve_corr = None
+        self.curve_piezo_list = []
+        self.curve_corr_list = []
         self.curves_dlambda = []
 
         # Ligne verticale pour t sélectionné
@@ -925,6 +933,15 @@ class MainWindow(QMainWindow):
 
         self.line_nspec = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
         self.pg_dlambda.addItem(self.line_nspec)
+
+        # Zone temporelle film (bornes)
+        self.zone_movie = [None, None]
+        self.zone_movie_lines = [
+            pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', style=Qt.DashLine)),
+            pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', style=Qt.DashLine))
+        ]
+        for line in self.zone_movie_lines:
+            self.pg_P.addItem(line)
 
         # ================== ÉTAT DYNAMIQUE (film) ==================
         self.current_index = 0
@@ -1864,7 +1881,7 @@ class MainWindow(QMainWindow):
     def update(self,val): # pour la barre de défilmetn des images
         self.current_index=int(val)
         self.Num_im=self.index_cam[self.index_select][self.current_index]
-        self.update_movie()
+        self._update_movie_frame()
 
     def read_frame(self,cap,frame_number,unit="rgb"):
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
@@ -2161,38 +2178,69 @@ class MainWindow(QMainWindow):
             print("spinbox_t_move error:", e)
 
     def Update_Print(self):
-        if self.index_select ==-1:
+        if self.index_select == -1 or self.index_select >= len(self.curves_P):
             return
-        data=[]
-        if self.var_bouton[3].isChecked():
-            data=data+list(self.plot_T[self.index_select][0].get_ydata())
 
-            
-        for T in self.plot_T[self.index_select] :
-            T.set_visible(self.var_bouton[1].isChecked())
-        self.plot_T[self.index_select][0].set_visible(self.var_bouton[1].isChecked())
-        for j in range(len(self.plot_P[self.index_select])):
-            for i ,P in enumerate(self.plot_P[self.index_select][j]):
-                if i!=2:
-                    P.set_visible(self.var_bouton[6].isChecked())
-                else:
-                    P.set_visible(self.var_bouton[0].isChecked())
-                    if self.var_bouton[0].isChecked():
-                        data=data+list(P.get_ydata())
-        self.plot_piezo[self.index_select].set_visible(self.var_bouton[2].isChecked())
+        data = []
+        show_dPdt = self.var_bouton[0].isChecked()
+        show_T = self.var_bouton[1].isChecked()
+        show_piezo = self.var_bouton[2].isChecked()
+        show_corr = self.var_bouton[3].isChecked()
+        show_P = self.var_bouton[6].isChecked()
 
-        if self.var_bouton[3].isChecked():
-             data=data+list(self.plot_correlations[self.index_select].get_ydata())
+        for curve in self.curves_T[self.index_select]:
+            curve.setVisible(show_T)
+            if show_T:
+                y = curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
 
-            
-        self.plot_correlations[self.index_select].set_visible(self.var_bouton[3].isChecked())
+        for curve in self.curves_P[self.index_select]:
+            curve.setVisible(show_P)
+            if show_P:
+                y = curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
+
+        for curve in self.curves_dPdt[self.index_select]:
+            curve.setVisible(show_dPdt)
+            if show_dPdt:
+                y = curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
+
+        for curve in self.curves_sigma[self.index_select]:
+            curve.setVisible(show_P)
+            if show_P:
+                y = curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
+
+        if self.curve_piezo_list and self.index_select < len(self.curve_piezo_list):
+            piezo_curve = self.curve_piezo_list[self.index_select]
+            piezo_curve.setVisible(show_piezo)
+            if show_piezo:
+                y = piezo_curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
+
+        if self.curve_corr_list and self.index_select < len(self.curve_corr_list):
+            corr_curve = self.curve_corr_list[self.index_select]
+            corr_curve.setVisible(show_corr)
+            if show_corr:
+                y = corr_curve.getData()[1]
+                if y is not None:
+                    data.extend(y.tolist())
+
         if data:
-            self.axc1l2.set_ylim([min(data)*1.01,max(data)*1.01])
-    
-        self.canvas.draw_idle()
-        #self.img = self.axc2l1.imshow(RUN.Movie[self.current_index], cmap='gray',vmax=np.max([np.array(u) for u in RUN.Movie])) #.crop(echantillon)
-   
-#########################################################################################################################################################################################
+            y_min = np.nanmin(data)
+            y_max = np.nanmax(data)
+            if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
+                self.pg_dPdt.setYRange(y_min * 1.01, y_max * 1.01, padding=0)
+
+        self.pg_P.enableAutoRange(axis='y', enable=True)
+        self.pg_dPdt.enableAutoRange(axis='y', enable=True)
+        self.pg_sigma.enableAutoRange(axis='y', enable=True)
 #? COMMANDE self.update 
     def f_gauge_select(self):
         col1 = self.Gauge_type_selector.model().item(self.Gauge_type_selector.currentIndex()).background().color().getRgb()
@@ -2887,18 +2935,22 @@ class MainWindow(QMainWindow):
         else:
             titre="No Movie"
 
-        self.axc2l1.set_title(titre,fontsize=15,c=self.color[self.index_select])
-        self.current_index = len(self.t_cam[self.index_select])//2
-        self.slider.valmax = len(self.index_cam[self.index_select])
-        self.slider.ax.set_xlim(0,len(self.index_cam[self.index_select]))
-        self.update_movie()
-        self.slider.ax.figure.canvas.draw_idle()
+        self.setWindowTitle(titre)
+        if self.index_select < len(self.index_cam):
+            if self.index_cam[self.index_select]:
+                self.current_index = len(self.index_cam[self.index_select])//2
+            else:
+                self.current_index = 0
+            self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
+            self.slider.setValue(self.current_index)
+        self._update_movie_frame()
         self.label_CED.setText( "CEDd "+item.text()+" select")
-        x_min,x_max=min(self.time[self.index_select]),max(self.time[self.index_select])
-        self.axc1l1.set_xlim( x_min,x_max)
-        self.axc1l2.set_xlim( x_min,x_max)
-        self.axc1l3.set_xlim( x_min,x_max)
-        self.canvas.draw_idle()
+        if self.index_select < len(self.time) and self.time[self.index_select]:
+            x_min,x_max=min(self.time[self.index_select]),max(self.time[self.index_select])
+            self.pg_P.setXRange(x_min,x_max,padding=0.01)
+            self.pg_dPdt.setXRange(x_min,x_max,padding=0.01)
+            self.pg_sigma.setXRange(x_min,x_max,padding=0.01)
+            self.pg_dlambda.setXRange(x_min,x_max,padding=0.01)
 
     def PRINT_CEDd(self, item=None, objet_run=None):
         """
@@ -2958,25 +3010,25 @@ class MainWindow(QMainWindow):
                 else:
                     titre = "No Movie"
 
-                self.axc2l1.set_title(titre, fontsize=15, c=self.color[self.index_select])
+                self.setWindowTitle(titre)
 
                 # Sélection du milieu de la séquence
                 if self.index_select < len(self.t_cam) and self.t_cam[self.index_select]:
                     self.current_index = len(self.t_cam[self.index_select]) // 2
-                    self.slider.valmax = len(self.index_cam[self.index_select])
-                    self.slider.ax.set_xlim(0, len(self.index_cam[self.index_select]))
+                    self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
+                    self.slider.setValue(self.current_index)
                     self.Num_im = self.index_cam[self.index_select][self.current_index]
                     Frame = self.read_frame(self.cap[self.index_select], self.Num_im)
-                    self.img = self.axc2l1.imshow(Frame, cmap='gray', vmax=np.max(Frame))
-                    self.update_movie()
-                    self.slider.ax.figure.canvas.draw_idle()
+                    self.img_item.setImage(np.array(Frame).T, autoLevels=True)
+                    self._update_movie_frame()
 
                     x_min, x_max = min(self.t_cam[self.index_select]), max(self.t_cam[self.index_select])
-                    self.axc1l1.set_xlim(x_min, x_max)
-                    self.axc1l2.set_xlim(x_min, x_max)
-                    self.axc1l3.set_xlim(x_min, x_max)
-                    self.axc2l3.set_xlim(x_min, x_max)
-                    self.canvas.draw_idle()
+                    self.pg_P.setXRange(x_min, x_max, padding=0.01)
+                    self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
+                    self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
+                    self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
+
+                name_select = item.text()
 
                 name_select = item.text()
 
@@ -3028,16 +3080,18 @@ class MainWindow(QMainWindow):
             l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
 
             # Axes temps
-            self.axc1l1.set_xlim(min(Time), max(Time))
-            self.axc1l2.set_xlim(min(Time), max(Time))
-            self.axc1l3.set_xlim(min(Time), max(Time))
+            self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
 
             self.time.append(Time)
             self.spectre_number.append(self.RUN.list_nspec)
-            self.plot_P.append([])
-            self.plot_sigma.append([])
-            self.plot_spe.append([])
-            self.plot_correlations.append(None)
+            self.curves_P.append([])
+            self.curves_dPdt.append([])
+            self.curves_sigma.append([])
+            self.curves_T.append([])
+            self.curves_dlambda.append([])
 
             motif_jauge = ["+", "o", "*"]
             l_c = []
@@ -3049,61 +3103,39 @@ class MainWindow(QMainWindow):
                     (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
                     for x in range(2, len(l_p_filtre) - 2)
                 ]
-                if i == 0:
-                    name = name_select
-                    self.plot_P[-1].append([
-                        self.axc1l1.fill_between(Time, l_P[i] * 1.025, l_P[i] * 0.975, alpha=0.3, color=G.color_print[0]),
-                        self.axc1l1.plot(Time, l_P[i], "D", mfc=G.color_print[0], mec=c, label=name, markersize=4)[0],
-                        self.axc1l2.plot(self.time[-1][2:-2], dps, "D", mfc=G.color_print[0], mec=c, label=f'$dP/dt_{name}:$', markersize=4)[0]
-                    ])
-                    self.plot_sigma[-1].append(
-                        self.axc1l3.plot(Time, l_fwhm[i], "D", mfc=G.color_print[0], mec=c, label=f"$\sigma_{name}$")[0]
-                    )
-                else:
-                    self.plot_P[-1].append([
-                        self.axc1l1.fill_between(Time, l_P[i] * 1.025, l_P[i] * 0.975, alpha=0.3, color=G.color_print[0]),
-                        self.axc1l1.plot(Time, l_P[i], "D", mfc=G.color_print[0], mec=c, label=name, markersize=4)[0],
-                        self.axc1l2.plot(self.time[-1][2:-2], dps, "D", mfc=G.color_print[0], mec=c, label=f'$dP/dt_{name}:$', markersize=4)[0]
-                    ])
-                    self.plot_sigma[-1].append(
-                        self.axc1l3.plot(Time, l_fwhm[i], "D", mfc=G.color_print[0], mec=c)[0]
-                    )
-
+                self.curves_P[-1].append(
+                    self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
+                self.curves_dPdt[-1].append(
+                    self.pg_dPdt.plot(self.time[-1][2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
+                self.curves_sigma[-1].append(
+                    self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
             if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
-                self.plot_T.append([
-                    self.axc1l2.plot(Time, l_T[-1], "P", mfc="darkred", mec=c, label='$T_{Jauge}:$'+str(self.index_select), markersize=2)[0],
-                    self.axc1l2.fill_between(Time, l_T[-1] - l_sigma_T[-1] / 2, l_T[-1] + l_sigma_T[-1] / 2, alpha=0.3, color=G.color_print[0])
-                ])
+                self.curves_T[-1].append(
+                    self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
+                )
             else:
-                self.plot_T.append([
-                    self.axc1l2.plot([])[0],
-                    self.axc1l2.plot([])[0]
-                ])
-
+                self.curves_T[-1].append(self.pg_dPdt.plot([], []))
             # Piezo
-            if type(self.RUN.data_Oscillo) != type(None):
-                self.plot_piezo.append(self.axc1l1.plot(time_amp, amp, '-', color=c)[0])
+            if self.RUN.data_Oscillo is not None:
+                self.curve_piezo_list.append(self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c)))
             else:
-                self.plot_piezo.append(self.axc1l1.plot([])[0])
-
+                self.curve_piezo_list.append(self.pg_P.plot([], []))
             for spe in l_spe:
                 if spe is not []:
-                    self.plot_spe[-1].append(self.axc2l3.plot(Time, spe, "+", c=c)[0])
-
+                    self.curves_dlambda[-1].append(
+                        self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
+                    )
             # Film
             if self.RUN.folder_Movie is not None:
-                if hasattr(self.RUN, 't0_movie'):
-                    t0_movie = self.RUN.t0_movie
-                else:
-                    t0_movie = 0
-
+                t0_movie = getattr(self.RUN, 't0_movie', 0)
                 cap, fps, nb_frames = self.Read_Movie(self.RUN)
                 self.cap.append(cap)
                 self.t_cam.append([])
                 self.correlations.append([])
                 self.index_cam.append([])
-                first = True
-                gray_prev = None
                 gray_l = []
                 nb_c = 5
 
@@ -3114,14 +3146,9 @@ class MainWindow(QMainWindow):
                         self.index_cam[-1].append(i)
                         if self.var_bouton[3].isChecked():
                             correlation = 0
-                            if first:
-                                gray_prev = self.read_frame(cap, i - 1, unit="gray")
-                                gray_l = [gray_prev]
-
                             gray_curr = self.read_frame(cap, i, unit="gray")
                             for gray in gray_l:
                                 correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
-
                             self.correlations[-1].append(correlation)
                             if len(gray_l) > nb_c:
                                 del gray_l[0]
@@ -3129,64 +3156,42 @@ class MainWindow(QMainWindow):
 
                 if self.var_bouton[3].isChecked() and self.correlations[-1]:
                     self.correlations[-1] = np.array(self.correlations[-1]) / max(abs(np.array(self.correlations[-1])))
-                    self.plot_correlations[-1] = self.axc1l2.plot(self.t_cam[-1], self.correlations[-1], '-', c=c)[0]
+                    self.curve_corr_list.append(
+                        self.pg_dPdt.plot(self.t_cam[-1], self.correlations[-1], pen=pg.mkPen(c))
+                    )
                 else:
-                    self.plot_correlations[-1] = self.axc1l2.plot([], [])[0]
+                    self.curve_corr_list.append(self.pg_dPdt.plot([], []))
 
                 self.current_index = len(self.t_cam[-1]) // 2
                 self.Num_im = self.index_cam[-1][self.current_index]
                 t = self.t_cam[-1][self.current_index]
 
                 Frame = self.read_frame(cap, self.Num_im)
-                self.img = self.axc2l1.imshow(Frame, cmap='gray', vmax=np.max(Frame))
-                self.text_box.set_text(
-                    '$t_s$={}ms n°s={} \n\n $t_i=${}µs n°i={} \n\n P={}GPa T or dP/dt={} K or GPa/ms \n\n dP/dt={}GPa/ms'.format(
+                self.img_item.setImage(np.array(Frame).T, autoLevels=True)
+                self.pg_text_label.setText(
+                    '$t_s$={}ms n°s={} <br>$t_i=${}µs n°i={} <br>P={}GPa T or dP/dt={} K or GPa/ms <br>dP/dt={}GPa/ms'.format(
                         round(self.x1 * 1e3, 3),
                         round(self.x5, 2),
                         round(t * 1e6, 3),
                         self.Num_im,
                         round(self.y1, 2),
                         round(self.y3, 2),
-                        round((self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3, 3)
+                        0.0 if self.tstart == self.tend else round((self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3, 3)
                     )
                 )
 
-                if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
-                    titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
-                else:
-                    titre = "No Movie"
+                self.line_t_P.setPos(t)
+                self.line_t_sigma.setPos(t)
+                self.line_t_dPdt.setPos(t)
+                self.line_nspec.setPos(t)
 
-                self.axc2l1.set_title(titre, fontsize=15, c=self.c_m[self.index_select])
-
-                plot_clear(self.t_im)
-                plot_clear(self.t_im5)
-                plot_clear(self.t_im6)
-                plot_clear(self.t_im3)
-
-                self.t_im = self.axc1l1.axvline(t, linestyle='-.', color='black')
-                self.t_im5 = self.axc1l3.axvline(t, linestyle='-.', color='black')
-                self.t_im6 = self.axc2l3.axvline(t, linestyle='-.', color='black')
-                self.t_im3 = self.axc1l2.axvline(t, linestyle='-.', color='black')
-
-                self.slider.valmax = len(self.index_cam[self.index_select])
-                self.slider.ax.set_xlim(0, len(self.index_cam[self.index_select]))
-                self.update_movie()
-                self.slider.ax.figure.canvas.draw_idle()
+                self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
+                self.slider.setValue(self.current_index)
+                self._update_movie_frame()
 
             else:
                 self.Num_im, t = 0, Time[0]
-                self.img = self.axc2l1.imshow(
-                    [
-                        [0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],
-                        [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
-                        [0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
-                        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
-                        [0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0]
-                    ],
-                    cmap='gray'
-                )
-                self.plot_correlations[-1] = self.axc1l2.plot([], [])[0]
-
+                self.curve_corr_list.append(self.pg_dPdt.plot([], []))
             # Nettoyage et chargement du premier spectre
             self.CLEAR_ALL()
             self.RUN = self.variables.liste_objets[self.index_select]
@@ -3388,45 +3393,65 @@ class MainWindow(QMainWindow):
             index = self.liste_objets_widget.row(item)
         else:
             index=self.index_select
-        #print("DEL id_select:",index,"list_id",self.list_index ,self.list_index[index] )
         if self.index_select>=0:
-            for t in self.plot_T[index]:
-                t.remove()
-            
-            del(self.plot_T[index])
-            for j in range(len(self.plot_P[index])):
-                for p in self.plot_P[index][j]:
-                    p.remove()
-                self.plot_sigma[index][j].remove()
-            for plot in self.plot_spe[index]:
-                plot.remove()
-            del(self.plot_spe[index])
-            del(self.plot_sigma[index])
-            del(self.plot_P[index])
-            del(self.cap[index])
-            del(self.t_cam[index])
-            del(self.correlations[index])
-            del(self.index_cam[index])
-            del(self.time[index])
-            self.plot_piezo[index].remove()
-            del(self.plot_piezo[index])
-            if self.plot_correlations[index] is not None:
-                self.plot_correlations[index].remove()
-            del(self.plot_correlations[index])
-            del(self.list_index[index])
-            del(self.variables.liste_objets[index])
+            if index < len(self.curves_T):
+                for curve in self.curves_T[index]:
+                    try:
+                        self.pg_dPdt.removeItem(curve)
+                    except Exception:
+                        pass
+                del self.curves_T[index]
+            if index < len(self.curves_P):
+                for curve in self.curves_P[index]:
+                    try:
+                        self.pg_P.removeItem(curve)
+                    except Exception:
+                        pass
+                del self.curves_P[index]
+            if index < len(self.curves_dPdt):
+                for curve in self.curves_dPdt[index]:
+                    try:
+                        self.pg_dPdt.removeItem(curve)
+                    except Exception:
+                        pass
+                del self.curves_dPdt[index]
+            if index < len(self.curves_sigma):
+                for curve in self.curves_sigma[index]:
+                    try:
+                        self.pg_sigma.removeItem(curve)
+                    except Exception:
+                        pass
+                del self.curves_sigma[index]
+            if index < len(self.curves_dlambda):
+                for curve in self.curves_dlambda[index]:
+                    try:
+                        self.pg_dlambda.removeItem(curve)
+                    except Exception:
+                        pass
+                del self.curves_dlambda[index]
+            if index < len(self.curve_piezo_list):
+                try:
+                    self.pg_P.removeItem(self.curve_piezo_list[index])
+                except Exception:
+                    pass
+                del self.curve_piezo_list[index]
+            if index < len(self.curve_corr_list):
+                try:
+                    self.pg_dPdt.removeItem(self.curve_corr_list[index])
+                except Exception:
+                    pass
+                del self.curve_corr_list[index]
+            for lst in [self.cap, self.t_cam, self.correlations, self.index_cam, self.time, self.spectre_number]:
+                if index < len(lst):
+                    del lst[index]
+            if index < len(self.variables.liste_objets):
+                del self.variables.liste_objets[index]
             self.liste_objets_widget.takeItem(index)
             self.c_m.insert(0,self.color[index])
-            del(self.color[index])
-            #if index is self.index_select:
-                #self.axc2l2.clear()
+            del self.color[index]
             self.index_select-=1
             if self.index_select>=0:
                 self.SELECT_CEDd(item=self.liste_objets_widget.item(int(self.index_select)))
-            else:
-                plt.autoscale()
-                self.canvas.draw_idle()
-    
     def Dell_Jauge(self):# - - - DELL JAUGE- - -#
         if self.index_jauge == -1:
             return print("jauge not select")
@@ -3478,7 +3503,6 @@ class MainWindow(QMainWindow):
             #del(self.plot_fit[self.index_jauge])
             #del(self.bit_fit[self.index_jauge])
             del(self.Spectrum.Gauges[self.index_jauge])
-            self.canvas.draw_idle()
             self.text_box_msg.setText('JAUGE DELL')
             self.name_gauge.setText("Add ?")
             self.name_gauge.setStyleSheet("background-color: red;")
@@ -3718,10 +3742,16 @@ class MainWindow(QMainWindow):
 
         self.Print_fit_start()
 
-        self.plot_pic_fit[self.index_jauge].append(self.ax_spectrum.fill_between(self.Spectrum.wnb,y_plot,min(y_plot),where=y_plot>min(y_plot),alpha=0.2,color=self.Spectrum.Gauges[self.index_jauge].color_print[0]))#,label=self.Nom_pic[self.index_jauge][-1]+" initiale"))
+        self.plot_pic_fit[self.index_jauge].append(
+            self.pg_spectrum.plot(
+                self.Spectrum.wnb, y_plot,
+                pen=None,
+                fillLevel=float(np.nanmin(y_plot)),
+                brush=pg.mkBrush(self.Spectrum.Gauges[self.index_jauge].color_print[0])
+            )
+        )
         self.Spectrum.Gauges[self.index_jauge].pics.append(X_pic)
 
-        self.canvas.draw_idle()
 
     def Click_Zone(self):
         """Définit / efface la zone de fit pour la jauge courante, sans tracés Matplotlib."""
@@ -3862,9 +3892,11 @@ class MainWindow(QMainWindow):
             del(self.list_text_pic[self.index_jauge][-1])
             self.J[self.index_jauge]-=1
             self.listbox_pic.takeItem(self.J[self.index_jauge])
-            self.plot_pic_fit[self.index_jauge][-1].remove()
+            try:
+                self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][-1])
+            except Exception:
+                pass
             del(self.plot_pic_fit[self.index_jauge][-1])
-            self.canvas.draw_idle()
             self.text_box_msg.setText('UNDO PIC')
             del(self.list_y_fit_start[self.index_jauge][-1])
             self.Print_fit_start()
@@ -3883,12 +3915,14 @@ class MainWindow(QMainWindow):
                 del(self.list_text_pic[self.index_jauge][self.index_pic_select])
                 self.J[self.index_jauge]-=1
                 self.listbox_pic.takeItem(self.index_pic_select)
-                self.plot_pic_fit[self.index_jauge][self.index_pic_select].remove()
+                try:
+                    self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
+                except Exception:
+                    pass
                 del(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
                 del(self.list_y_fit_start[self.index_jauge][self.index_pic_select])
                 del(self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select])
                 self.Print_fit_start()
-                self.canvas_spec.draw_idle()
                 
     def select_pic(self):
         if self.bit_bypass:
