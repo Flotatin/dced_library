@@ -1,3 +1,4 @@
+# DEPRECATED: utiliser les classes de Bibli/Data et Bibli/Use_Data pour les nouvelles évolutions
 import sys
 import tkinter as tk
 
