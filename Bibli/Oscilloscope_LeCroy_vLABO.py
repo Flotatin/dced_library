@@ -442,7 +442,7 @@ class OscilloscopeViewer(QMainWindow):
     
     def load_trace_button(self):
         c_t=["k","darkorange","darkred","darkblue","darkgreen"]
-        file =filedialog.askopenfilename(title="Sélectionner TRACE")
+        file =filedialog.askopenfilename(title="Sélectionner TRACE") 
         if file:
             oscilo=pd.read_csv(file, sep='\s+', skipfooter=0, engine='python')
             if self.plot_load != []:

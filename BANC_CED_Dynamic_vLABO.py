@@ -335,6 +335,10 @@ class MainWindow(QMainWindow):
         self.viewer = None
         self.bit_c_reduite = True
 
+        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = index_select interne
+        self.variables.liste_objets = []  # liste des CEDd chargés
+        self.index_select = -1    
+
         # Initialisation logique légère
         self.load_latest_file()
         self.f_gauge_select()
@@ -854,6 +858,7 @@ class MainWindow(QMainWindow):
         # ================== EVENTS PyQtGraph ==================
         # clic sur le spectre principal
         self.pg_spectrum.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
 
     # ==================================================================
@@ -991,6 +996,10 @@ class MainWindow(QMainWindow):
         self.pg_dPdt.scene().sigMouseClicked.connect(self._on_ddac_click)
         self.pg_sigma.scene().sigMouseClicked.connect(self._on_ddac_click)
         self.pg_dlambda.scene().sigMouseClicked.connect(self._on_ddac_click)
+
+        self._spectrum_limits_initialized = False
+        self._zoom_limits_initialized = False
+
 
     # ==================================================================
     # ===============   SECTION : TOOLS CHECKS (3,2)  ==================
@@ -1317,10 +1326,19 @@ class MainWindow(QMainWindow):
             return
 
         pos = mouse_event.scenePos()
-        if not self.pg_spectrum.sceneBoundingRect().contains(pos):
+
+        # --- déterminer sur quel plot on a cliqué ---
+        clicked_on_spec = self.pg_spectrum.sceneBoundingRect().contains(pos)
+        clicked_on_zoom = self.pg_zoom.sceneBoundingRect().contains(pos)
+
+        if not (clicked_on_spec or clicked_on_zoom):
             return
 
-        vb = self.pg_spectrum.getViewBox()
+        if clicked_on_spec:
+            vb = self.pg_spectrum.getViewBox()
+        else:  # clicked_on_zoom
+            vb = self.pg_zoom.getViewBox()
+
         mouse_point = vb.mapSceneToView(pos)
         x = mouse_point.x()
         y = mouse_point.y()
@@ -1331,11 +1349,13 @@ class MainWindow(QMainWindow):
         self.cross_zoom.setData([x], [y])
 
         # Si tu veux garder la logique "clic = sélectionner/placer un pic"
-        if self.select_clic_box.isChecked():
+        # → seulement quand on clique dans le spectre principal
+        if self.select_clic_box.isChecked() and clicked_on_spec:
             try:
                 self._select_nearest_pic_from_x(x)
             except Exception as e:
                 print("Error in _select_nearest_pic_from_x:", e)
+
 
     def _select_nearest_pic_from_x(self, x):
         """
@@ -1410,7 +1430,22 @@ class MainWindow(QMainWindow):
 
         # 1) Spectre corrigé
         if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
-            self.curve_spec_data.setData(S.x_corr, S.y_corr)
+            x = np.asarray(S.x_corr)
+            y = np.asarray(S.y_corr)
+            self.curve_spec_data.setData(x, y)
+
+            vb_spec = self.pg_spectrum.getViewBox()
+
+            # Contraindre les bornes de pan/zoom au spectre
+            self._set_viewbox_limits_from_data(vb_spec, x, y, padding=0.02)
+
+            # Centrer la vue sur les données seulement une fois
+            if not self._spectrum_limits_initialized:
+                try:
+                    vb_spec.setXRange(float(x[0]), float(x[-1]), padding=0.02)
+                except Exception as e:
+                    print("XRange error:", e)
+                self._spectrum_limits_initialized = True
         else:
             self.curve_spec_data.setData([], [])
 
@@ -1422,8 +1457,8 @@ class MainWindow(QMainWindow):
             self.curve_spec_fit.setData([], [])
 
         # 3) dY
-        if hasattr(S, "dY") and S.dY is not None and hasattr(S, "x_corr") and S.x_corr is not None:
-            self.curve_dy.setData(S.x_corr, S.dY)
+        if hasattr(S, "dY") and S.dY is not None and hasattr(S, "X") and S.X is not None:
+            self.curve_dy.setData(S.X, S.dY)
         else:
             self.curve_dy.setData([], [])
 
@@ -1442,8 +1477,12 @@ class MainWindow(QMainWindow):
             self.curve_baseline_blfit.setData([], [])
 
         # 5) Zoom (on prend la même zone que le pic sélectionné ou la zone globale)
-        if self.index_jauge >= 0 and self.index_pic_select >= 0 \
-        and self.list_y_fit_start and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select:
+        if (
+            self.index_jauge >= 0
+            and self.index_pic_select >= 0
+            and self.list_y_fit_start
+            and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select
+        ):
             y_pic = self.list_y_fit_start[self.index_jauge][self.index_pic_select]
             self.curve_zoom_pic.setData(S.wnb, y_pic)
             self.curve_spec_pic_select.setData(S.wnb, y_pic)
@@ -1456,6 +1495,69 @@ class MainWindow(QMainWindow):
             else:
                 self.curve_zoom_data.setData([], [])
 
+        # Contraindre aussi le ViewBox du zoom
+        if hasattr(S, "wnb") and hasattr(S, "spec"):
+            xz = np.asarray(S.wnb)
+            yz = np.asarray(S.spec)
+            vb_zoom = self.pg_zoom.getViewBox()
+            self._set_viewbox_limits_from_data(vb_zoom, xz, yz, padding=0.02)
+
+            if not self._zoom_limits_initialized:
+                try:
+                    vb_zoom.setXRange(float(xz[0]), float(xz[-1]), padding=0.02)
+                except Exception as e:
+                    print("Zoom XRange error:", e)
+                self._zoom_limits_initialized = True
+
+    def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
+        """
+        Contraint les bornes du ViewBox en fonction des données.
+        - vb : le ViewBox (pg_spectrum.getViewBox(), pg_zoom.getViewBox(), etc.)
+        - x_data, y_data : 1D array-like
+        - padding : marge relative (2% par défaut)
+        """
+        if x_data is None:
+            return
+
+        x = np.asarray(x_data)
+        if x.size == 0:
+            return
+
+        x_min = float(np.nanmin(x))
+        x_max = float(np.nanmax(x))
+
+        if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+            return
+
+        # petite marge
+        span_x = x_max - x_min
+        x0 = x_min - span_x * padding
+        x1 = x_max + span_x * padding
+
+        # Même chose pour Y si fourni
+        if y_data is not None:
+            y = np.asarray(y_data)
+            if y.size > 0:
+                y_min = float(np.nanmin(y))
+                y_max = float(np.nanmax(y))
+                if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
+                    span_y = y_max - y_min
+                    y0 = y_min - span_y * padding
+                    y1 = y_max + span_y * padding
+                else:
+                    y0 = y_min
+                    y1 = y_max
+            else:
+                y0 = None
+                y1 = None
+        else:
+            y0 = y1 = None
+
+        # Contraint les limites de pan/zoom
+        if y0 is not None and y1 is not None:
+            vb.setLimits(xMin=x0, xMax=x1, yMin=y0, yMax=y1)
+        else:
+            vb.setLimits(xMin=x0, xMax=x1)
 
     def execute_code(self, code=None):
         if code is None:
@@ -2527,7 +2629,7 @@ class MainWindow(QMainWindow):
             self.Spectrum.indexX = np.where(
                 (self.Spectrum.wnb >= x_min) & (self.Spectrum.wnb <= x_max)
             )[0]
-            self.Spectrum.x_corr = self.Spectrum.wnb[self.Spectrum.indexX]
+            x_sub = self.Spectrum.wnb[self.Spectrum.indexX]
             y_sub = self.Spectrum.y_corr[self.Spectrum.indexX]
             blfit = self.Spectrum.blfit[self.Spectrum.indexX]
         else:
@@ -2540,7 +2642,7 @@ class MainWindow(QMainWindow):
                     (self.Spectrum.wnb >= self.X_s[0])
                     & (self.Spectrum.wnb <= self.X_e[0])
                 )[0]
-                self.Spectrum.x_corr = self.Spectrum.wnb[self.Zone_fit[0]]
+                x_sub = self.Spectrum.wnb[self.Zone_fit[0]]
                 self.Spectrum.indexX = self.Zone_fit[0]
                 for J in self.Spectrum.Gauges:
                     J.indexX = self.Zone_fit[0]
@@ -2549,6 +2651,7 @@ class MainWindow(QMainWindow):
             else:
                 y_sub = self.Spectrum.y_corr
                 blfit = self.Spectrum.blfit
+                x_sub = self.Spectrum.wnb
 
         # 3) Option : lmfit par jauge (comme avant)
         if self.vslmfit.isChecked():
@@ -2565,7 +2668,7 @@ class MainWindow(QMainWindow):
         try:
             params, params_covar = curve_fit(
                 sum_function,
-                self.Spectrum.x_corr,
+                x_sub,
                 y_sub,
                 p0=initial_guess,
                 bounds=bounds,
@@ -2576,10 +2679,10 @@ class MainWindow(QMainWindow):
             self.text_box_msg.setText("FIT ERROR" + str(e))
             return
 
-        fit = sum_function(self.Spectrum.x_corr, *params)
+        fit = sum_function(x_sub, *params)
 
         accepted, is_better = self._propose_and_confirm_fit(
-            x_fit=self.Spectrum.x_corr,
+            x_fit=x_sub,
             y_fit=y_sub,
             fit=fit,
             color="m",
@@ -2598,7 +2701,7 @@ class MainWindow(QMainWindow):
 
         # 5) Validation : mise à jour de Spectrum + Param0 + list_y_fit_start
         self.Spectrum.Y = fit + blfit
-        self.Spectrum.X = self.Spectrum.x_corr
+        self.Spectrum.X = x_sub
         self.Spectrum.dY = y_sub - fit
         self.Spectrum.lamb_fit = params[0]
 
@@ -2797,198 +2900,308 @@ class MainWindow(QMainWindow):
         self.axc1l3.set_xlim( x_min,x_max)
         self.canvas.draw_idle()
 
-    def PRINT_CEDd(self,item,objet_run=None):
-        if objet_run is None:
-            # Fonction pour charger l'objet Python à partir du fichier sélectionné
-            chemin_fichier = os.path.join(self.variables.dossier_selectionne, item.text())
-            #self.liste_objets_widget.setCurrentRow(item)
-            index = self.liste_fichiers.row(item)
+    def PRINT_CEDd(self, item=None, objet_run=None):
+        """
+        - Si item est donné (clic dans self.liste_fichiers) et objet_run est None :
+            -> on charge depuis un fichier si c'est la première fois
+            -> sinon on récupère l'objet déjà en mémoire (file_index_map)
+        - Si objet_run est donné (création d'un nouveau CEDd) :
+            -> on l'ajoute à la liste interne, sans passer par la liste de fichiers
+        """
 
-            if index not in self.list_index :
-                self.list_index.append(index) 
-                objet_run = CL.LOAD_CEDd(chemin_fichier)
+        # Sécu : s'assurer que la map existe
+        if not hasattr(self, "file_index_map"):
+            self.file_index_map = {}
+
+        # ------------------------------------------------------------------
+        # CAS 1 : on vient d'un clic dans la liste de fichiers (item non None)
+        # ------------------------------------------------------------------
+        if objet_run is None and item is not None:
+            chemin_fichier = os.path.join(self.variables.dossier_selectionne, item.text())
+            index_file = self.liste_fichiers.row(item)
+
+            # Si on change de CEDd, on sauvegarde le précédent
+            if self.index_select >= 0 and self.index_select < len(self.variables.liste_objets):
+                try:
+                    self.variables.liste_objets[self.index_select] = copy.deepcopy(self.RUN)
+                except Exception as e:
+                    print("PRINT_CEDd: erreur sauvegarde RUN courant :", e)
+
+            # Fichier jamais ouvert -> on charge depuis le disque
+            if index_file not in self.file_index_map:
+                try:
+                    objet_run = CL.LOAD_CEDd(chemin_fichier)
+                except Exception as e:
+                    print("Erreur LOAD_CEDd:", e)
+                    self.text_box_msg.setText(f"Erreur chargement CEDd : {e}")
+                    return
+
+                # On ajoute dans la liste des objets
+                self.variables.liste_objets.append(objet_run)
+                self.index_select = len(self.variables.liste_objets) - 1
+
+                # On mémorise la correspondance fichier -> index interne
+                self.file_index_map[index_file] = self.index_select
+
+            # Fichier déjà ouvert -> on récupère l'objet en mémoire
             else:
-                self.variables.liste_objets[self.index_select]=copy.deepcopy(self.RUN)
-                self.index_select=self.list_index.index(index)
-                self.RUN=copy.deepcopy(self.variables.liste_objets[self.index_select])
-                if hasattr(self.RUN,"fps") and self.RUN.fps is not None:
-                    titre="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
-                    self.axc2l1.set_title(titre,fontsize=15,c=self.color[self.index_select])
-                    self.current_index = len(self.t_cam[self.index_select])//2
+                self.index_select = self.file_index_map[index_file]
+                self.RUN = copy.deepcopy(self.variables.liste_objets[self.index_select])
+
+                # Partie ancienne "else" : mise à jour des limites / film pour RUN déjà chargé
+                if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
+                    try:
+                        titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
+                    except Exception as e:
+                        print("fps log ERROR:", e)
+                        titre = "Movie :" + str(round(self.RUN.fps, 2)) + "fps"
+                else:
+                    titre = "No Movie"
+
+                self.axc2l1.set_title(titre, fontsize=15, c=self.color[self.index_select])
+
+                # Sélection du milieu de la séquence
+                if self.index_select < len(self.t_cam) and self.t_cam[self.index_select]:
+                    self.current_index = len(self.t_cam[self.index_select]) // 2
                     self.slider.valmax = len(self.index_cam[self.index_select])
-                    self.slider.ax.set_xlim(0,len(self.index_cam[self.index_select]))
-                    self.Num_im=self.index_cam[self.index_select][self.current_index]
-                    Frame=self.read_frame(self.cap[self.index_select],self.Num_im)
-                    self.img = self.axc2l1.imshow(Frame, cmap='gray',vmax=np.max(Frame),)
+                    self.slider.ax.set_xlim(0, len(self.index_cam[self.index_select]))
+                    self.Num_im = self.index_cam[self.index_select][self.current_index]
+                    Frame = self.read_frame(self.cap[self.index_select], self.Num_im)
+                    self.img = self.axc2l1.imshow(Frame, cmap='gray', vmax=np.max(Frame))
                     self.update_movie()
                     self.slider.ax.figure.canvas.draw_idle()
-                    x_min,x_max=min(self.t_cam[self.index_select]),max(self.t_cam[self.index_select])
-                    self.axc1l1.set_xlim( x_min,x_max)
-                    self.axc1l2.set_xlim( x_min,x_max)
-                    self.axc1l3.set_xlim( x_min,x_max)
-                    self.axc2l3.set_xlim( x_min,x_max)
-                    self.canvas.draw_idle()       
-                else:
-                    titre="No Movie"
 
-                
-                    
-            name_select=item.text()
-            
+                    x_min, x_max = min(self.t_cam[self.index_select]), max(self.t_cam[self.index_select])
+                    self.axc1l1.set_xlim(x_min, x_max)
+                    self.axc1l2.set_xlim(x_min, x_max)
+                    self.axc1l3.set_xlim(x_min, x_max)
+                    self.axc2l3.set_xlim(x_min, x_max)
+                    self.canvas.draw_idle()
+
+                name_select = item.text()
+
+        # ------------------------------------------------------------------
+        # CAS 2 : on reçoit directement un CEDd (objet_run != None)
+        # (p.ex. CREAT_new_CEDd(...) qui appelle PRINT_CEDd(objet_run=New_CEDd))
+        # ------------------------------------------------------------------
+        elif objet_run is not None:
+            # On sauve l'ancien RUN si besoin
+            if self.index_select >= 0 and self.index_select < len(self.variables.liste_objets):
+                try:
+                    self.variables.liste_objets[self.index_select] = copy.deepcopy(self.RUN)
+                except Exception as e:
+                    print("PRINT_CEDd: erreur sauvegarde RUN courant (objet_run) :", e)
+
+            # On ajoute ce nouveau CEDd dans la liste
+            self.variables.liste_objets.append(objet_run)
+            self.index_select = len(self.variables.liste_objets) - 1
+            self.RUN = objet_run
+            # Pas de mapping dans file_index_map ici (pas lié à un fichier de la liste)
+            name_select = CL.os.path.basename(self.RUN.CEDd_path) if hasattr(self.RUN, "CEDd_path") else "CEDd_new"
 
         else:
-            index=0
-            self.list_index.append(index) 
+            # Ni item, ni objet_run -> rien à faire
+            return
 
-        if type(objet_run) is CL.CEDd:
-            c=self.c_m[0]
+        # ------------------------------------------------------------------
+        # À partir d'ici : on a self.RUN défini et self.index_select cohérent
+        # On exécute tout ton bloc existant qui était sous : if type(objet_run) is CL.CEDd:
+        # ------------------------------------------------------------------
+        if isinstance(self.RUN, CL.CEDd):
+            # Couleur
+            c = self.c_m[0]
             self.color.append(c)
-            del(self.c_m[0])
-            
-            self.RUN=objet_run
- 
-            name_select=CL.os.path.basename(self.RUN.CEDd_path)
-            self.variables.liste_objets.append(objet_run)
-            item =QListWidgetItem(name_select)
+            del self.c_m[0]
+
+            # Creation item dans la liste des CEDd
+            name_select = CL.os.path.basename(self.RUN.CEDd_path)
+            item = QListWidgetItem(name_select)
             item.setBackground(QColor(c))
 
-            dark_c=mcolors.rgb2hex(tuple(min(1,c*0.5) for c in mcolors.hex2color(c)))
-
+            dark_c = mcolors.rgb2hex(
+                tuple(min(1, cc * 0.5) for cc in mcolors.hex2color(c))
+            )
             item.setForeground(QColor(dark_c))
             self.liste_objets_widget.addItem(item)
-            self.index_select=self.list_index.index(index)
-            
-            #name_jauges=[x.name for x in self.RUN.Gauges_init]  
-            l_P,l_sigma_P,l_lambda,l_fwhm,l_spe,l_T,l_sigma_T,Time,spectre_number,time_amp,amp,Gauges_RUN=self.Read_RUN(self.RUN)
-            self.axc1l1.set_xlim(min(Time),max(Time))
-            self.axc1l2.set_xlim(min(Time),max(Time))
-            self.axc1l3.set_xlim(min(Time),max(Time))
+
+            # Lecture des données CEDd
+            l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
+
+            # Axes temps
+            self.axc1l1.set_xlim(min(Time), max(Time))
+            self.axc1l2.set_xlim(min(Time), max(Time))
+            self.axc1l3.set_xlim(min(Time), max(Time))
+
             self.time.append(Time)
             self.spectre_number.append(self.RUN.list_nspec)
             self.plot_P.append([])
             self.plot_sigma.append([])
             self.plot_spe.append([])
             self.plot_correlations.append(None)
-            motif_jauge=["+","o","*"]
-            l_c=[]
-            for i,G in enumerate(Gauges_RUN):
+
+            motif_jauge = ["+", "o", "*"]
+            l_c = []
+
+            for i, G in enumerate(Gauges_RUN):
                 l_c.append(G.color_print[0])
-                l_p_filtre=CL.savgol_filter(l_P[i],10,1)
-                dps=[(l_p_filtre[x+1]-l_p_filtre[x-1])/(Time[x+1]-Time[x-1])*1e-3 for x in range(2,len(l_p_filtre)-2)]
+                l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
+                dps = [
+                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                    for x in range(2, len(l_p_filtre) - 2)
+                ]
                 if i == 0:
-                    name=name_select
-                    self.plot_P[-1].append([self.axc1l1.fill_between(Time,l_P[i]*1.025,l_P[i]*0.975,alpha=0.3,  color=G.color_print[0]),self.axc1l1.plot(Time,l_P[i],"D",mfc=G.color_print[0],mec=c,label=name,markersize=4)[0],self.axc1l2.plot(self.time[-1][2:-2],dps,"D",mfc=G.color_print[0],mec=c,label=f'$dP/dt_{name}:$',markersize=4)[0]])#,label='Sm'
-                    self.plot_sigma[-1].append(self.axc1l3.plot(Time, l_fwhm[i], "D",mfc=G.color_print[0],mec=c,label=f"$\sigma_{name}$")[0])
+                    name = name_select
+                    self.plot_P[-1].append([
+                        self.axc1l1.fill_between(Time, l_P[i] * 1.025, l_P[i] * 0.975, alpha=0.3, color=G.color_print[0]),
+                        self.axc1l1.plot(Time, l_P[i], "D", mfc=G.color_print[0], mec=c, label=name, markersize=4)[0],
+                        self.axc1l2.plot(self.time[-1][2:-2], dps, "D", mfc=G.color_print[0], mec=c, label=f'$dP/dt_{name}:$', markersize=4)[0]
+                    ])
+                    self.plot_sigma[-1].append(
+                        self.axc1l3.plot(Time, l_fwhm[i], "D", mfc=G.color_print[0], mec=c, label=f"$\sigma_{name}$")[0]
+                    )
                 else:
-                    self.plot_P[-1].append([self.axc1l1.fill_between(Time,l_P[i]*1.025,l_P[i]*0.975,alpha=0.3,  color=G.color_print[0]),self.axc1l1.plot(Time,l_P[i],"D",mfc=G.color_print[0],mec=c,label=name,markersize=4)[0],self.axc1l2.plot(self.time[-1][2:-2],dps,"D",mfc=G.color_print[0],mec=c,label=f'$dP/dt_{name}:$',markersize=4)[0]])#,label='Sm'
-                    self.plot_sigma[-1].append(self.axc1l3.plot(Time, l_fwhm[i], "D",mfc=G.color_print[0],mec=c,)[0])
+                    self.plot_P[-1].append([
+                        self.axc1l1.fill_between(Time, l_P[i] * 1.025, l_P[i] * 0.975, alpha=0.3, color=G.color_print[0]),
+                        self.axc1l1.plot(Time, l_P[i], "D", mfc=G.color_print[0], mec=c, label=name, markersize=4)[0],
+                        self.axc1l2.plot(self.time[-1][2:-2], dps, "D", mfc=G.color_print[0], mec=c, label=f'$dP/dt_{name}:$', markersize=4)[0]
+                    ])
+                    self.plot_sigma[-1].append(
+                        self.axc1l3.plot(Time, l_fwhm[i], "D", mfc=G.color_print[0], mec=c)[0]
+                    )
+
             if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
-                self.plot_T.append([self.axc1l2.plot(Time,l_T[-1],"P",mfc="darkred",mec=c,label='$T_{Jauge}:$'+str(index),markersize=2)[0],self.axc1l2.fill_between(Time,l_T[-1]-l_sigma_T[-1]/2,l_T[-1]+l_sigma_T[-1]/2,alpha=0.3,  color=G.color_print[0] )])
+                self.plot_T.append([
+                    self.axc1l2.plot(Time, l_T[-1], "P", mfc="darkred", mec=c, label='$T_{Jauge}:$'+str(self.index_select), markersize=2)[0],
+                    self.axc1l2.fill_between(Time, l_T[-1] - l_sigma_T[-1] / 2, l_T[-1] + l_sigma_T[-1] / 2, alpha=0.3, color=G.color_print[0])
+                ])
             else:
-                self.plot_T.append([self.axc1l2.plot([])[0],self.axc1l2.plot([])[0]])
+                self.plot_T.append([
+                    self.axc1l2.plot([])[0],
+                    self.axc1l2.plot([])[0]
+                ])
 
-
-
+            # Piezo
             if type(self.RUN.data_Oscillo) != type(None):
-                self.plot_piezo.append(self.axc1l1.plot(time_amp, amp, '-', color=c)[0]) #label='Tension piézo:'
+                self.plot_piezo.append(self.axc1l1.plot(time_amp, amp, '-', color=c)[0])
             else:
                 self.plot_piezo.append(self.axc1l1.plot([])[0])
+
             for spe in l_spe:
                 if spe is not []:
-                    self.plot_spe[-1].append(self.axc2l3.plot(Time,spe,"+",c=c)[0])
-            
-            if self.RUN.folder_Movie is not None :
+                    self.plot_spe[-1].append(self.axc2l3.plot(Time, spe, "+", c=c)[0])
+
+            # Film
+            if self.RUN.folder_Movie is not None:
                 if hasattr(self.RUN, 't0_movie'):
-                    t0_movie=self.RUN.t0_movie
+                    t0_movie = self.RUN.t0_movie
                 else:
-                    t0_movie=0
-                cap,fps,nb_frames=self.Read_Movie(self.RUN)
+                    t0_movie = 0
+
+                cap, fps, nb_frames = self.Read_Movie(self.RUN)
                 self.cap.append(cap)
                 self.t_cam.append([])
                 self.correlations.append([])
                 self.index_cam.append([])
-                first=True
-                gray_prev=None
-                gray_l=[]
-                nb_c=5
+                first = True
+                gray_prev = None
+                gray_l = []
+                nb_c = 5
+
                 for i in range(nb_frames):
-                    t_c=i/fps+t0_movie
-                    if t_c<Time[-1] and t_c >Time[0] :
+                    t_c = i / fps + t0_movie
+                    if Time[0] < t_c < Time[-1]:
                         self.t_cam[-1].append(t_c)
                         self.index_cam[-1].append(i)
                         if self.var_bouton[3].isChecked():
-                            correlation=0
+                            correlation = 0
                             if first:
-                                gray_prev=self.read_frame(cap,i-1,unit="gray")
-            
-                                gray_l=[gray_prev]
+                                gray_prev = self.read_frame(cap, i - 1, unit="gray")
+                                gray_l = [gray_prev]
 
-                            gray_curr=self.read_frame(cap,i,unit="gray")
-
+                            gray_curr = self.read_frame(cap, i, unit="gray")
                             for gray in gray_l:
-                                correlation += cv2.matchTemplate(gray,gray_curr,cv2.TM_CCOEFF_NORMED)[0][0]-1
-                            
-                            self.correlations[-1].append(correlation)  
+                                correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
 
+                            self.correlations[-1].append(correlation)
                             if len(gray_l) > nb_c:
-                                del(gray_l[0])
+                                del gray_l[0]
                             gray_l.append(gray_curr)
 
-                if self.var_bouton[3].isChecked():
-                    self.correlations[-1]=np.array(self.correlations[-1])/max(abs(np.array(self.correlations[-1])))
-                    self.plot_correlations[-1]=self.axc1l2.plot(self.t_cam[-1],self.correlations[-1],'-',c=c)[0]
+                if self.var_bouton[3].isChecked() and self.correlations[-1]:
+                    self.correlations[-1] = np.array(self.correlations[-1]) / max(abs(np.array(self.correlations[-1])))
+                    self.plot_correlations[-1] = self.axc1l2.plot(self.t_cam[-1], self.correlations[-1], '-', c=c)[0]
                 else:
-                    self.plot_correlations[-1]=self.axc1l2.plot([],[])[0]
-                self.current_index = len(self.t_cam[-1])//2
-                self.Num_im=self.index_cam[-1][self.current_index]
-                t=self.t_cam[-1][self.current_index]
+                    self.plot_correlations[-1] = self.axc1l2.plot([], [])[0]
 
-                Frame=self.read_frame(cap,self.Num_im)
-                self.img = self.axc2l1.imshow(Frame, cmap='gray',vmax=np.max(Frame),) #.crop(echantillon)
-                self.text_box.set_text('$t_s$={}ms n°s={} \n\n $t_i=${}µs n°i={} \n\n P={}GPa T or dP/dt={} K or GPa/ms \n\n dP/dt={}GPa/ms'.format(round(self.x1*1e3,3),round(self.x5,2),round(t*1e6,3),self.Num_im,round(self.y1,2),round(self.y3,2),round((self.Pstart-self.Pend)/(self.tstart-self.tend)*1e-3,3)))
-                
-                if hasattr(self.RUN,"fps") and self.RUN.fps is not None:
-                    titre="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
+                self.current_index = len(self.t_cam[-1]) // 2
+                self.Num_im = self.index_cam[-1][self.current_index]
+                t = self.t_cam[-1][self.current_index]
+
+                Frame = self.read_frame(cap, self.Num_im)
+                self.img = self.axc2l1.imshow(Frame, cmap='gray', vmax=np.max(Frame))
+                self.text_box.set_text(
+                    '$t_s$={}ms n°s={} \n\n $t_i=${}µs n°i={} \n\n P={}GPa T or dP/dt={} K or GPa/ms \n\n dP/dt={}GPa/ms'.format(
+                        round(self.x1 * 1e3, 3),
+                        round(self.x5, 2),
+                        round(t * 1e6, 3),
+                        self.Num_im,
+                        round(self.y1, 2),
+                        round(self.y3, 2),
+                        round((self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3, 3)
+                    )
+                )
+
+                if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
+                    titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
                 else:
-                    titre="No Movie"
-                self.axc2l1.set_title(titre,fontsize=15,c=self.c_m[self.index_select])
+                    titre = "No Movie"
+
+                self.axc2l1.set_title(titre, fontsize=15, c=self.c_m[self.index_select])
 
                 plot_clear(self.t_im)
                 plot_clear(self.t_im5)
                 plot_clear(self.t_im6)
                 plot_clear(self.t_im3)
 
-                self.t_im = self.axc1l1.axvline(t, linestyle='-.',color='black') #Ligne indicatrice de l'image
-                self.t_im5 = self.axc1l3.axvline(t, linestyle='-.',color='black') #Ligne indicatrice de l'image spectre_number[np.argmin(abs(np.array(Time)-t))]
-                self.t_im6 = self.axc2l3.axvline(t, linestyle='-.',color='black') #Ligne indicatrice de l'image
-                self.t_im3 = self.axc1l2.axvline(t, linestyle='-.',color='black') #Ligne indicatrice de l'image 
+                self.t_im = self.axc1l1.axvline(t, linestyle='-.', color='black')
+                self.t_im5 = self.axc1l3.axvline(t, linestyle='-.', color='black')
+                self.t_im6 = self.axc2l3.axvline(t, linestyle='-.', color='black')
+                self.t_im3 = self.axc1l2.axvline(t, linestyle='-.', color='black')
 
                 self.slider.valmax = len(self.index_cam[self.index_select])
-                self.slider.ax.set_xlim(0,len(self.index_cam[self.index_select]))
+                self.slider.ax.set_xlim(0, len(self.index_cam[self.index_select]))
                 self.update_movie()
                 self.slider.ax.figure.canvas.draw_idle()
-    
+
             else:
-                self.Num_im,t=0,Time[0]
-                self.img = self.axc2l1.imshow( [
-[0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],
-[0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
-[0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
-[0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
-[0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0]
-], cmap='gray')
-            self.plot_correlations[-1]=self.axc1l2.plot([],[])[0]
+                self.Num_im, t = 0, Time[0]
+                self.img = self.axc2l1.imshow(
+                    [
+                        [0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],
+                        [0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
+                        [0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
+                        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0],
+                        [0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0]
+                    ],
+                    cmap='gray'
+                )
+                self.plot_correlations[-1] = self.axc1l2.plot([], [])[0]
+
+            # Nettoyage et chargement du premier spectre
             self.CLEAR_ALL()
-            self.RUN=objet_run
+            self.RUN = self.variables.liste_objets[self.index_select]
             self.listbox_Spec.clear()
             for s in self.RUN.list_nspec:
                 self.listbox_Spec.addItem(str(s))
-            self.index_spec=0
-            self.bit_bypass=True
+
+            self.index_spec = 0
+            self.bit_bypass = True
             self.LOAD_Spectrum()
-            self.bit_bypass=False
-            self.Update_Print()         
-        self.label_CED.setText( "CEDd "+name_select+" select") 
+            self.bit_bypass = False
+            self.Update_Print()
+
+        # Label de CED sélectionné
+        self.label_CED.setText("CEDd " + name_select + " select")
 
     def LOAD_Spectrum(self, item=None, Spectrum=None):
         """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
@@ -3093,6 +3306,8 @@ class MainWindow(QMainWindow):
             self.param_filtre_1_entry.setText(str(self.Spectrum.param_f[0]))
             self.param_filtre_2_entry.setText(str(self.Spectrum.param_f[1]))
             self.deg_baseline_entry.setValue(self.Spectrum.deg_baseline)
+            self._spectrum_limits_initialized = False
+            self._zoom_limits_initialized = False
             self.Baseline_spectrum()  # -> Data_treatement + y_fit_start + refresh graph
 
             # Mise à jour UI jauge/pics
@@ -3419,7 +3634,7 @@ class MainWindow(QMainWindow):
         else:
             n_spec+=1
         self.text_box_msg.setText(f"New spec n°{n_spec}")  
-        self.LOAD_Spectrum(Spectrum=CL.Spectre(self.variables.data_Spectro[0],self.variables.data_Spectro[n_spec],Gauges=save_gauges))
+        self.LOAD_Spectrum(Spectrum=CL.Spectre(np.array(self.variables.data_Spectro[0]),np.array(self.variables.data_Spectro[n_spec]),Gauges=save_gauges))
         self.bit_bypass=False
 
     def SAVE_CEDd(self):
