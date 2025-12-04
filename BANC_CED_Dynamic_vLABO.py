@@ -440,9 +440,12 @@ class MainWindow(QMainWindow):
         self.label_CED.setText("CEDd " + name_select + " select")
 
         self.CLEAR_ALL()
-        self.listbox_Spec.clear()
-        for s in state.ced.list_nspec:
-            self.listbox_Spec.addItem(str(s))
+        # Mise à jour de la spinbox de spectre
+        n_spec = len(self.RUN.list_nspec) if hasattr(self.RUN, "list_nspec") else len(self.RUN.Spectra)
+        self.spinbox_spec_index.blockSignals(True)
+        self.spinbox_spec_index.setRange(0, max(0, n_spec - 1))
+        self.spinbox_spec_index.setValue(0)
+        self.spinbox_spec_index.blockSignals(False)
 
         self.index_spec = 0
         self.bit_bypass = True
@@ -1148,13 +1151,13 @@ class MainWindow(QMainWindow):
         bouton_dossier.clicked.connect(self.parcourir_dossier)
         layout_fichiers.addWidget(bouton_dossier)
 
-        self.listbox_Spec = QListWidget()
-        self.listbox_Spec.doubleClicked.connect(self.LOAD_Spectrum)
-        layout_fichiers.addWidget(self.listbox_Spec)
+        # Sélecteur d'index de spectre
+        self.spinbox_spec_index = QSpinBox()
+        self.spinbox_spec_index.setRange(0, 0)      # sera mis à jour quand un CEDd sera chargé
+        self.spinbox_spec_index.setValue(0)
+        self.spinbox_spec_index.valueChanged.connect(self.on_spec_index_changed)
+        layout_fichiers.addLayout(creat_spin_label(self.spinbox_spec_index, "Spec index"))
 
-        if self.RUN is not None:
-            for s in self.RUN.list_nspec:
-                self.listbox_Spec.addItem(str(s))
 
         self.liste_fichiers = QListWidget()
         self.liste_fichiers.itemDoubleClicked.connect(self.PRINT_CEDd)
@@ -1175,6 +1178,29 @@ class MainWindow(QMainWindow):
 
         group_fichiers.setLayout(layout_fichiers)
         self.grid_layout.addWidget(group_fichiers, 2, 0, 2, 2)
+
+    def on_spec_index_changed(self, value: int):
+        """Appelé quand on change l'index de spectre via la spinbox."""
+        if self.RUN is None:
+            return
+        if not hasattr(self.RUN, "Spectra") or not self.RUN.Spectra:
+            return
+        if value < 0 or value >= len(self.RUN.Spectra):
+            return
+
+        self.index_spec = value
+        self.Spectrum = self.RUN.Spectra[self.index_spec]
+
+        self.bit_bypass = True
+        try:
+            # si LOAD_Spectrum accepte un argument Spectrum, utilise-le
+            self.LOAD_Spectrum(Spectrum=self.Spectrum)
+        except TypeError:
+            # sinon, si ta LOAD_Spectrum lit self.index_spec directement
+            self.LOAD_Spectrum()
+        self.bit_bypass = False
+
+        self.Update_Print()
 
     # ==================================================================
     # ===============   SECTION : PYTHON KERNEL (2,2)  =================
@@ -2086,24 +2112,45 @@ class MainWindow(QMainWindow):
     def f_data_spectro(self):
         if self.loaded_filename_spectro:
             try:
-                self.variables.data_Spectro=pd.read_csv( self.loaded_filename_spectro, sep='\s+',header=None,skiprows=43,engine='python')
+                self.variables.data_Spectro = pd.read_csv(
+                    self.loaded_filename_spectro,
+                    sep=r"\s+",
+                    header=None,
+                    skiprows=43,
+                    engine="python",
+                )
             except Exception as e:
-                self.text_box_msg.setText("ERRO FILE")
+                self.text_box_msg.setText("ERROR FILE")
                 return
 
-        if len(self.variables.data_Spectro.columns) ==2:
-            wave=self.variables.data_Spectro.iloc[:,0]
-            Iua=self.variables.data_Spectro.iloc[:,1]
-            wave_unique=np.unique(wave)
-            num_spec = len(wave)//len(wave_unique)
-            if num_spec >=1:
-                Iua=Iua.values.reshape(num_spec,len(wave_unique)).T
-                self.variables.data_Spectro=pd.DataFrame(np.column_stack([wave_unique,Iua]),columns=[0]+ [i+1 for i in range(num_spec)])
+        # Cas 2 colonnes : (X, Y empilés) → reshape en [X, Spec1, Spec2, ...]
+        if len(self.variables.data_Spectro.columns) == 2:
+            wave = self.variables.data_Spectro.iloc[:, 0]
+            Iua = self.variables.data_Spectro.iloc[:, 1]
+            wave_unique = np.unique(wave)
+            num_spec = len(wave) // len(wave_unique)
 
-        self.listbox_Spec.clear()
-        for i in range(1,len(self.variables.data_Spectro.columns)):
-            self.listbox_Spec.addItem(str(f"Spec n°{i}"))
-        self.listbox_Spec.setCurrentRow(0)
+            if num_spec >= 1:
+                Iua = Iua.values.reshape(num_spec, len(wave_unique)).T
+                self.variables.data_Spectro = pd.DataFrame(
+                    np.column_stack([wave_unique, Iua]),
+                    columns=[0] + [i + 1 for i in range(num_spec)],
+                )
+
+        # ---- MISE À JOUR DE LA SPINBOX DE SPECTRE ----
+        # nb de spectres = nb de colonnes - 1 (colonne 0 = X)
+        n_spec = max(0, self.variables.data_Spectro.shape[1] - 1)
+
+        if hasattr(self, "spinbox_spec_index"):
+            self.spinbox_spec_index.blockSignals(True)
+            # on garde un index 0-based pour index_spec
+            self.spinbox_spec_index.setRange(0, max(0, n_spec - 1))
+            self.spinbox_spec_index.setValue(0)
+            self.spinbox_spec_index.blockSignals(False)
+
+        # petit message d’info
+        self.text_box_msg.setText(f"{n_spec} spectres chargés depuis le fichier spectro.")
+
 
     def select_spectro_file(self):
         self.loaded_filename_spectro=self.f_select_directory(self.loaded_filename_spectro,self.dir_label_spectro,"Spectrum",type_file=".asc")
@@ -3837,20 +3884,49 @@ class MainWindow(QMainWindow):
 
 
     def CREAT_new_Spectrum(self):
-        save_gauges=[]
-        
-        if type(self.Spectrum) is CL.Spectre:
-            save_gauges=copy.deepcopy(self.Spectrum.Gauges)
+        save_gauges = []
+
+        # Sauvegarde des jauges du spectre courant si possible
+        if isinstance(self.Spectrum, CL.Spectre):
+            save_gauges = copy.deepcopy(self.Spectrum.Gauges)
+
+        # On ne vide pas tout, seulement ce que CLEAR_ALL(empty=False) fait déjà
         self.CLEAR_ALL(empty=False)
-        self.bit_bypass=True
-        n_spec=self.listbox_Spec.currentRow()
-        if n_spec ==-1:
-            n_spec=1
+        self.bit_bypass = True
+
+        # Récupération de l'index de spectre depuis la spinbox
+        if hasattr(self, "spinbox_spec_index"):
+            idx = int(self.spinbox_spec_index.value())   # 0,1,2,...
+            # Dans data_Spectro : col 0 = X, col 1..N = spectres
+            n_spec = idx + 1
         else:
-            n_spec+=1
-        self.text_box_msg.setText(f"New spec n°{n_spec}")  
-        self.LOAD_Spectrum(Spectrum=CL.Spectre(np.array(self.variables.data_Spectro[0]),np.array(self.variables.data_Spectro[n_spec]),Gauges=save_gauges))
-        self.bit_bypass=False
+            # fallback : premier spectre (colonne 1)
+            n_spec = 1
+
+        # Sécurité : clamp sur le nombre de colonnes disponibles
+        max_col = self.variables.data_Spectro.shape[1] - 1  # dernière colonne de Y
+        if n_spec < 1:
+            n_spec = 1
+        if n_spec > max_col:
+            n_spec = max_col
+
+        self.text_box_msg.setText(f"New spec n°{n_spec}")
+
+        x = np.array(self.variables.data_Spectro[0])
+        y = np.array(self.variables.data_Spectro[n_spec])
+
+        # Création du nouveau Spectre avec les mêmes jauges que le spectre courant
+        new_spectrum = CL.Spectre(x, y, Gauges=save_gauges)
+
+        # Chargement dans l'UI
+        try:
+            self.LOAD_Spectrum(Spectrum=new_spectrum)
+        except TypeError:
+            # au cas où ta LOAD_Spectrum lit self.Spectrum / self.index_spec plutôt qu'un argument
+            self.Spectrum = new_spectrum
+            self.LOAD_Spectrum()
+
+        self.bit_bypass = False
 
     def SAVE_CEDd(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
