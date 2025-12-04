@@ -1963,10 +1963,104 @@ class MainWindow(QMainWindow):
     def REFRESH(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
         self.RUN.Corr_Summary(All=True)
-        self.bit_bypass=True
-        self.CLEAR_CEDd(item=None)
-        self.bit_bypass=False
-        self.PRINT_CEDd(objet_run=self.RUN,item=None)
+        state = self._get_state_for_run()
+        if state is None:
+            self.text_box_msg.setText("Aucun état RunViewState pour rafraîchir ce CEDd")
+            return
+
+        state.ced = copy.deepcopy(self.RUN)
+        self._update_curves_for_run(state)
+
+    def _update_curves_for_run(self, state: RunViewState):
+        """Met à jour les courbes existantes d'un run sans les recréer."""
+
+        (
+            l_P,
+            l_sigma_P,
+            l_lambda,
+            l_fwhm,
+            l_spe,
+            l_T,
+            l_sigma_T,
+            Time,
+            spectre_number,
+            time_amp,
+            amp,
+            Gauges_RUN,
+        ) = self.Read_RUN(self.RUN)
+
+        if Time is not None and len(Time) > 0:
+            self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
+            self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
+
+        state.time = Time
+        state.spectre_number = spectre_number
+
+        for i, G in enumerate(Gauges_RUN):
+            l_p_filtre = CL.savgol_filter(l_P[i], 10, 1) if len(l_P[i]) > 0 else np.array([])
+            if len(l_p_filtre) > 4 and len(Time) > 4:
+                dps = [
+                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                    for x in range(2, len(l_p_filtre) - 2)
+                ]
+                time_dps = Time[2:-2]
+            else:
+                dps = []
+                time_dps = []
+
+            if i >= len(state.curves_P):
+                state.curves_P.append(
+                    self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
+            else:
+                state.curves_P[i].setData(Time, l_P[i])
+
+            if i >= len(state.curves_dPdt):
+                state.curves_dPdt.append(
+                    self.pg_dPdt.plot(time_dps, dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
+            else:
+                state.curves_dPdt[i].setData(time_dps, dps)
+
+            if i >= len(state.curves_sigma):
+                state.curves_sigma.append(
+                    self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+                )
+            else:
+                state.curves_sigma[i].setData(Time, l_fwhm[i])
+
+        has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
+        if has_T:
+            curve_T = state.curves_T[0] if state.curves_T else self.pg_dPdt.plot([], [], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
+            if not state.curves_T:
+                state.curves_T.append(curve_T)
+            curve_T.setData(Time, l_T[-1] if l_T else [])
+        elif state.curves_T:
+            state.curves_T[0].setData([], [])
+
+        while len(state.curves_dlambda) < len(l_spe):
+            state.curves_dlambda.append(
+                self.pg_dlambda.plot([], [], pen=None, symbol='+', symbolPen=pg.mkPen(state.color))
+            )
+        for i, spe in enumerate(l_spe):
+            state.curves_dlambda[i].setData(Time, spe)
+        for extra_index in range(len(l_spe), len(state.curves_dlambda)):
+            state.curves_dlambda[extra_index].setData([], [])
+
+        if self.RUN.data_Oscillo is not None:
+            if state.piezo_curve is None:
+                state.piezo_curve = self.pg_P.plot([], [], pen=pg.mkPen(state.color))
+            state.piezo_curve.setData(time_amp, amp)
+        elif state.piezo_curve is not None:
+            state.piezo_curve.setData([], [])
+
+        if state.corr_curve is not None:
+            if self.var_bouton[3].isChecked() and state.correlations:
+                state.corr_curve.setData(state.t_cam, state.correlations)
+            else:
+                state.corr_curve.setData([], [])
 #########################################################################################################################################################################################
 #? COMMANDE FILE
     def f_select_directory(self,file_name,file_label,name,type_file=".asc"):
