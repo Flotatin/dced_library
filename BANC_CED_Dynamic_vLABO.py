@@ -168,9 +168,9 @@ file_command=r"txt_file\Command.txt"
 file_variables=r"txt_file\Variables.txt"
 folder_CEDd=r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"#r"C:\Users\dDAC-LHPS\Desktop\PROG_FLO_dDAC\Aquisition_Banc_CEDd\Fichier_CEDd"
 
-from Bibli import CL_FD_Update as CL
+from Bibli_python import CL_FD_Update as CL
 
-from Bibli import Oscilloscope_LeCroy_vLABO as Oscilo
+from Bibli_python import Oscilloscope_LeCroy_vLABO as Oscilo
 
 
 
@@ -408,7 +408,6 @@ class MainWindow(QMainWindow):
 
     def _finalize_run_selection(self, state: RunViewState, name_select: str):
         """Replace l'ancienne logique basée sur index_select par l'état RunViewState."""
-
         self.current_run_id = self._get_run_id(state.ced)
         self.RUN = copy.deepcopy(state.ced)
         self.index_select = self.liste_objets_widget.row(state.list_item) if state.list_item is not None else -1
@@ -424,12 +423,12 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(titre)
 
-        if state.index_cam:
+        if state.index_cam is not None and len(state.index_cam)>0:
             self.current_index = len(state.index_cam) // 2
             self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
 
-        if state.time:
+        if state.time is not None and len(state.time)>0:
             x_min, x_max = min(state.time), max(state.time)
             self.pg_P.setXRange(x_min, x_max, padding=0.01)
             self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
@@ -912,6 +911,7 @@ class MainWindow(QMainWindow):
 
         self.index_jauge = -1
         self.index_pic_select = -1
+        self.index_spec = 0
 
         self.X0 = 0
         self.Y0 = 0
@@ -1157,7 +1157,7 @@ class MainWindow(QMainWindow):
                 self.listbox_Spec.addItem(str(s))
 
         self.liste_fichiers = QListWidget()
-        self.liste_fichiers.itemClicked.connect(self.PRINT_CEDd)
+        self.liste_fichiers.itemDoubleClicked.connect(self.PRINT_CEDd)
         layout_fichiers.addWidget(self.liste_fichiers)
 
         files_brute = os.listdir(self.variables.dossier_selectionne)
@@ -1469,7 +1469,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print("Error in _select_nearest_pic_from_x:", e)
 
-
     def _select_nearest_pic_from_x(self, x):
         if self.Spectrum is None or self.Param0 is None:
             return
@@ -1717,7 +1716,6 @@ class MainWindow(QMainWindow):
             f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
             )
         self.pg_text_label.setText(txt)
-
 
     def f_CEDd_update_print(self):
         """Met à jour texte + sélection de spectre en fonction de x_clic / t."""
@@ -3025,24 +3023,26 @@ class MainWindow(QMainWindow):
         self.Print_fit_start()
 #########################################################################################################################################################################################
 #? COMMANDE LOAD 
-    def Read_RUN(self,RUN):
-        l_P,l_sigma_P,l_lambda,l_fwhm=[],[],[],[]
-        l_spe,l_T,l_sigma_T=[],[],[]
-        Gauges_RUN=RUN.Gauges_init
+    def Read_RUN(self, RUN):
+        l_P, l_sigma_P, l_lambda, l_fwhm = [], [], [], []
+        l_spe, l_T, l_sigma_T = [], [], []
+        Gauges_RUN = RUN.Gauges_init
 
         Summary = getattr(RUN, "Summary", None)
 
-        # --- 1) Cas Summary vide ou None : on renvoie des tableaux vides mais cohérents
+        # --- Cas Summary vide ou None : on renvoie des tableaux vides mais cohérents
         if Summary is None or Summary.empty:
-            # Time / spectre_number
+            # Time / spectre_number basés sur Time_spectrum + list_nspec
             if RUN.Time_spectrum is not None:
                 dt_n = len(RUN.Time_spectrum) - len(RUN.list_nspec)
                 if dt_n > 0:
                     Time = [RUN.Time_spectrum[i] for i in RUN.list_nspec]
                 elif dt_n < 0:
                     dt = np.mean(np.diff(RUN.Time_spectrum))
-                    Time = np.array(list(RUN.Time_spectrum) +
-                                    [RUN.Time_spectrum[-1] + dt*(1+i) for i in range(abs(dt_n))])
+                    Time = np.array(
+                        list(RUN.Time_spectrum)
+                        + [RUN.Time_spectrum[-1] + dt * (1 + i) for i in range(abs(dt_n))]
+                    )
                 else:
                     Time = RUN.Time_spectrum
             else:
@@ -3052,8 +3052,8 @@ class MainWindow(QMainWindow):
 
             # Oscillo éventuel
             if RUN.data_Oscillo is not None:
-                time_amp = np.array(RUN.data_Oscillo['Time'])
-                b = np.array(RUN.data_Oscillo['Channel3'])
+                time_amp = np.array(RUN.data_Oscillo["Time"])
+                b = np.array(RUN.data_Oscillo["Channel3"])
                 amp = CL.savgol_filter(b, 101, 2)
             else:
                 time_amp = np.array([])
@@ -3066,45 +3066,100 @@ class MainWindow(QMainWindow):
                 l_lambda.append(np.array([]))
                 l_fwhm.append(np.array([]))
 
-            # Pas de spe / T au début
-            return l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN
+            return (
+                l_P,
+                l_sigma_P,
+                l_lambda,
+                l_fwhm,
+                l_spe,
+                l_T,
+                l_sigma_T,
+                Time,
+                spectre_number,
+                time_amp,
+                amp,
+                Gauges_RUN,
+            )
 
-        for G in Gauges_RUN :
-            name=G.name
-            name_spe=G.name_spe
-            l_P.append(np.array( [ float(x) for x in RUN.Summary['P_'+name] if not isnan(float(x))]))
-            l_sigma_P.append(np.array( [ float(x) for x in RUN.Summary['sigma_P_'+name] if not isnan(float(x))]))
-            l_lambda.append(np.array( [ float(x) for x in RUN.Summary['lambda_'+name] if not isnan(float(x))]))
-            l_fwhm.append(np.array( [ float(x) for x in RUN.Summary['fwhm_'+name] if not isnan(float(x))]))
-            if "Ru" in name_spe:
-                l_spe.append(np.array( [ float(x) for x in RUN.Summary['Deltap12'] if not isnan(float(x))]))
+        # --- Cas Summary non vide : on garde TOUTES les lignes, avec NaN où il faut
+        n_rows = len(Summary)
+
+        for G in Gauges_RUN:
+            name = G.name
+            name_spe = G.name_spe
+
+            # on convertit toute la colonne en float, NaN compris
+            col_P = pd.to_numeric(Summary["P_" + name], errors="coerce").to_numpy(dtype=float)
+            col_sigma_P = pd.to_numeric(Summary["sigma_P_" + name], errors="coerce").to_numpy(dtype=float)
+            col_lambda = pd.to_numeric(Summary["lambda_" + name], errors="coerce").to_numpy(dtype=float)
+            col_fwhm = pd.to_numeric(Summary["fwhm_" + name], errors="coerce").to_numpy(dtype=float)
+
+            l_P.append(col_P)
+            l_sigma_P.append(col_sigma_P)
+            l_lambda.append(col_lambda)
+            l_fwhm.append(col_fwhm)
+
+            if "Ru" in name_spe and "Deltap12" in Summary.columns:
+                col_spe = pd.to_numeric(Summary["Deltap12"], errors="coerce").to_numpy(dtype=float)
+                l_spe.append(col_spe)
+
             if "T" in name_spe:
-                l_T.append(np.array( [ float(x) for x in RUN.Summary['T_'+name] if not isnan(float(x))]))
-                l_sigma_T.append(np.array( [ float(x) for x in RUN.Summary['sigma_T_'+name] if not isnan(float(x))]))
+                if "T_" + name in Summary.columns:
+                    col_T = pd.to_numeric(Summary["T_" + name], errors="coerce").to_numpy(dtype=float)
+                    l_T.append(col_T)
+                if "sigma_T_" + name in Summary.columns:
+                    col_sigma_T = pd.to_numeric(
+                        Summary["sigma_T_" + name], errors="coerce"
+                    ).to_numpy(dtype=float)
+                    l_sigma_T.append(col_sigma_T)
 
+        # --- Construction de Time aligné sur Summary
         if RUN.Time_spectrum is not None:
-            
-            dt_n= len(RUN.Time_spectrum)-len(RUN.list_nspec)
-            if dt_n>0:
-                Time = [RUN.Time_spectrum[i] for i in RUN.list_nspec]
-            elif dt_n<0:
-                dt=np.mean(np.diff(RUN.Time_spectrum))
-                Time=np.array(list(RUN.Time_spectrum)+[RUN.Time_spectrum[-1] + dt*(1+i) for i in range(abs(dt_n))])
+            # on aligne sur le nombre de lignes de Summary
+            ts = np.array(RUN.Time_spectrum)
+            if len(ts) >= n_rows:
+                Time = ts[:n_rows]
             else:
-                Time=RUN.Time_spectrum
-
+                # on extrapole si besoin
+                if len(ts) > 1:
+                    dt = np.mean(np.diff(ts))
+                else:
+                    dt = 1.0
+                extra = ts[-1] + dt * np.arange(1, n_rows - len(ts) + 1)
+                Time = np.concatenate([ts, extra])
         else:
-            Time=RUN.list_nspec
+            # fallback : on prend l'indice des spectres / Summary
+            if "n°Spec" in Summary.columns:
+                Time = Summary["n°Spec"].to_numpy(dtype=float)
+            else:
+                Time = np.arange(n_rows, dtype=float)
 
-        spectre_number=RUN.list_nspec
+        spectre_number = RUN.list_nspec
 
-
+        # --- Oscillo éventuel
         if RUN.data_Oscillo is not None:
-            time_amp=np.array(RUN.data_Oscillo['Time'])
-            b=np.array(RUN.data_Oscillo['Channel3'])
-            amp=CL.savgol_filter(b,101,2)
-        
-        return l_P,l_sigma_P,l_lambda,l_fwhm,l_spe,l_T,l_sigma_T,Time,spectre_number,time_amp,amp,Gauges_RUN
+            time_amp = np.array(RUN.data_Oscillo["Time"])
+            b = np.array(RUN.data_Oscillo["Channel3"])
+            amp = CL.savgol_filter(b, 101, 2)
+        else:
+            time_amp = np.array([])
+            amp = np.array([])
+
+        return (
+            l_P,
+            l_sigma_P,
+            l_lambda,
+            l_fwhm,
+            l_spe,
+            l_T,
+            l_sigma_T,
+            Time,
+            spectre_number,
+            time_amp,
+            amp,
+            Gauges_RUN,
+        )
+
 
     def Read_Movie(self,RUN):
         # Lecture vidéo avec OpenCV
@@ -3251,8 +3306,9 @@ class MainWindow(QMainWindow):
         state.list_item = item_run
 
         # Courbes P / dPdt / sigma / T
-        motif_jauge = ["+", "o", "*"]
+
         for i, G in enumerate(Gauges_RUN):
+            print(G.name)
             l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
             dps = [
                 (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
@@ -3321,7 +3377,7 @@ class MainWindow(QMainWindow):
                 t = state.t_cam[self.current_index]
                 Frame = self.read_frame(cap, self.Num_im)
                 if Frame is not None:
-                    self.img_item.setImage(np.array(Frame).T, autoLevels=True)
+                    self.img_item.setImage(np.array(Frame), autoLevels=True)
 
             self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
