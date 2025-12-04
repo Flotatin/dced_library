@@ -1528,23 +1528,134 @@ class CEDd:
         else:
             print("end > number of spectre !")
 
-    def Corr_Summary(self,num_spec=None,All=True,lambda_error=None,):
-        if All ==True :
+    def Corr_Summary(self, num_spec=None, All=True, lambda_error=None):
+        """
+        Met à jour self.Summary à partir des Spectra[i].study.
+
+        - Si All=True : reconstruit entièrement Summary à partir de tous les spectres.
+        - Sinon : ne met à jour que la ligne correspondant à num_spec (en créant ou remplaçant).
+        """
+
+        def _build_row_df(idx_spec, study):
+            """
+            Construit un DataFrame 1 ligne avec au minimum la colonne 'n°Spec'.
+            Si 'study' est un DataFrame/Series non vide, on le concatène horizontalement.
+            """
+            base_df = pd.DataFrame({"n°Spec": [int(idx_spec)]})
+
+            if study is None:
+                # Rien à ajouter
+                return base_df
+
+            # Series -> DataFrame 1 ligne
+            if isinstance(study, pd.Series):
+                study = study.to_frame().T
+
+            if isinstance(study, pd.DataFrame):
+                if study.empty:
+                    # Pas de données exploitables
+                    return base_df
+                study = study.reset_index(drop=True)
+                return pd.concat([base_df, study], axis=1)
+
+            # Type inattendu : on log et on ne concatène pas
+            print("Corr_Summary: unexpected type for 'study':", type(study))
+            return base_df
+
+        # -------------------------
+        # CAS 1 : Rebuild complet
+        # -------------------------
+        if All:
+            rows = []  # liste de Series (une par spectre)
+
             for i in range(len(self.Spectra)):
+                spe = self.Spectra[i]
+
+                # Mise à jour des paramètres des jauges depuis Gauges_init
                 for j in range(len(self.Gauges_init)):
-                    self.Spectra[i].Gauges[j].lamb0=self.Gauges_init[j].lamb0
-                    self.Spectra[i].Gauges[j].f_P=self.Gauges_init[j].f_P
-                    self.Spectra[i].Gauges[j].inv_f_P=self.Gauges_init[j].inv_f_P
-                if lambda_error is not None: #
-                    self.Spectra[i].lambda_error=lambda_error
-                self.Spectra[i].Calcul_study()
-                self.Summary.iloc[i]=pd.concat([pd.DataFrame({"n°Spec": [int(i)]}),self.Spectra[i].study],ignore_index=False,axis=1)
-        else:
-            if num_spec is not None:
-                i=np.where(np.array(self.Summary["n°Spec"]) == num_spec)[0][0]
-                self.Spectra[i].Calcul_study()
-                self.Summary.iloc[i]=pd.concat([pd.DataFrame({"n°Spec": [int(num_spec)]}),self.Spectra[i].study],ignore_index=False,axis=1)
-           
+                    if j < len(spe.Gauges):   # sécurité si nb de jauges a changé
+                        spe.Gauges[j].lamb0   = self.Gauges_init[j].lamb0
+                        spe.Gauges[j].f_P     = self.Gauges_init[j].f_P
+                        spe.Gauges[j].inv_f_P = self.Gauges_init[j].inv_f_P
+
+                if lambda_error is not None:
+                    spe.lambda_error = lambda_error
+
+                # Calcul de l'étude pour ce spectre
+                try:
+                    spe.Calcul_study()
+                except Exception as e:
+                    print(f"Corr_Summary: erreur dans Calcul_study pour spectre {i}: {e}")
+                    spe.study = None
+
+                # Construction de la ligne pour ce spectre
+                row_df = _build_row_df(i, getattr(spe, "study", None))
+                # row_df est un DF 1 ligne -> on récupère la Series
+                rows.append(row_df.iloc[0])
+
+            # On reconstruit complètement Summary à partir des lignes collectées
+            if rows:
+                self.Summary = pd.DataFrame(rows).reset_index(drop=True)
+            else:
+                # Aucun spectre exploitable : on crée un Summary vide avec au moins la colonne n°Spec
+                self.Summary = pd.DataFrame(columns=["n°Spec"])
+
+            return  # très important : on s'arrête là dans le cas All
+
+        # -------------------------
+        # CAS 2 : Mise à jour d'un seul spectre
+        # -------------------------
+        if num_spec is not None:
+            # Sécurité : s'assurer que Summary existe
+            if not hasattr(self, "Summary") or self.Summary is None:
+                self.Summary = pd.DataFrame()
+
+            # Recherche de la ligne par n°Spec, si la colonne existe
+            if "n°Spec" in self.Summary.columns and not self.Summary.empty:
+                idx_rows = np.where(np.array(self.Summary["n°Spec"]) == num_spec)[0]
+            else:
+                idx_rows = []
+
+            # Calcul de study pour ce spectre
+            # On suppose que num_spec correspond à l'indice dans self.Spectra (à adapter sinon)
+            if 0 <= num_spec < len(self.Spectra):
+                spe = self.Spectra[num_spec]
+            else:
+                print(f"Corr_Summary: num_spec {num_spec} hors limites pour self.Spectra.")
+                return
+
+            try:
+                spe.Calcul_study()
+            except Exception as e:
+                print(f"Corr_Summary: erreur dans Calcul_study pour spectre {num_spec}: {e}")
+                spe.study = None
+
+            row_df = _build_row_df(num_spec, getattr(spe, "study", None))
+            row = row_df.iloc[0]
+
+            if len(idx_rows) == 0:
+                # Pas encore de ligne pour ce n°Spec -> on ajoute
+                self.Summary = pd.concat(
+                    [self.Summary, pd.DataFrame([row])],
+                    ignore_index=True
+                )
+            else:
+                # On remplace la ligne existante
+                i = idx_rows[0]
+                # Si l'index i est hors limites (cas bizarre), on ajoute
+                if i >= len(self.Summary):
+                    self.Summary = pd.concat(
+                        [self.Summary, pd.DataFrame([row])],
+                        ignore_index=True
+                    )
+                else:
+                    # on aligne les colonnes pour éviter des KeyError
+                    for col in row.index:
+                        if col not in self.Summary.columns:
+                            self.Summary[col] = np.nan
+                    # et on remplace la ligne
+                    self.Summary.iloc[i] = row
+
     def Corr_Movie(self,folder_Movie=None,fps=None):
             if fps != None and folder_Movie==None:
                 self.fps=fps

@@ -280,7 +280,7 @@ class EditableDelegate(QStyledItemDelegate):
 
 class Variables:
     def __init__(self):
-        self.valeurs_boutons = [True,True, True,True,True,True,True]
+        self.valeurs_boutons = [True,True, True,False,True,True,True]
         self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
         self.liste_chemins_fichiers = []
         self.liste_objets = []
@@ -1471,53 +1471,49 @@ class MainWindow(QMainWindow):
 
 
     def _select_nearest_pic_from_x(self, x):
-        """
-        Sélectionne le pic dont le centre (Param0[i][j][0]) est le plus proche de x.
-        Met à jour index_jauge, index_pic_select, la combobox Gauge, et la liste des pics.
-        """
-        if not self.Param0 or self.Spectrum is None:
+        if self.Spectrum is None or self.Param0 is None:
             return
 
-        best_dx = None
-        best_i = None
-        best_j = None
-
-        if self.Spectrum.wnb is not None and len(self.Spectrum.wnb) > 1:
-            rng = (self.Spectrum.wnb[-1] - self.Spectrum.wnb[0]) / 50.0
-        else:
-            rng = float("inf")
+        centers = []
+        indices = []
 
         for i, Ljp in enumerate(self.Param0):
             for j, Jp in enumerate(Ljp):
                 try:
-                    x0 = float(Jp[0])
+                    centers.append(float(Jp[0]))
+                    indices.append((i, j))
                 except Exception:
-                    continue
-                dx = abs(x0 - x)
-                if dx < rng and (best_dx is None or dx < best_dx):
-                    best_dx = dx
-                    best_i = i
-                    best_j = j
+                    pass
 
-        if best_i is None:
-            # Rien de suffisamment proche
+        if not centers:
             return
 
-        # Changement de jauge si besoin
+        centers = np.array(centers)
+        k = np.argmin(np.abs(centers - x))
+        best_i, best_j = indices[k]
+        best_dx = abs(centers[k] - x)
+
+        # tolérance
+        wnb = getattr(self.Spectrum, "wnb", None)
+        if wnb is not None and len(wnb) > 1:
+            max_dx = (wnb[-1] - wnb[0]) / 10.0
+            if best_dx > max_dx:
+                return
+
+        # changement jauge
         if best_i != self.index_jauge:
             self.index_jauge = best_i
 
-            # Synchroniser la combo Gauge_type_selector si possible
             if 0 <= best_i < len(self.list_name_gauges):
                 gauge_name = self.list_name_gauges[best_i]
                 if gauge_name in self.liste_type_Gauge:
-                    idx_combo = self.liste_type_Gauge.index(gauge_name)
-                    self.Gauge_type_selector.setCurrentIndex(idx_combo)
+                    self.Gauge_type_selector.setCurrentIndex(
+                        self.liste_type_Gauge.index(gauge_name)
+                    )
 
-            # Recharger les infos de la jauge
             self.LOAD_Gauge()
 
-        # Sélection du pic dans cette jauge
+        # sélection pic
         self.index_pic_select = best_j
         self.bit_bypass = True
         try:
@@ -1588,39 +1584,6 @@ class MainWindow(QMainWindow):
                 self.curve_baseline_blfit.setData(S.wnb, S.blfit)
         else:
             self.curve_baseline_blfit.setData([], [])
-
-        # 5) Zoom (on prend la même zone que le pic sélectionné ou la zone globale)
-        if (
-            self.index_jauge >= 0
-            and self.index_pic_select >= 0
-            and self.list_y_fit_start
-            and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select
-        ):
-            y_pic = self.list_y_fit_start[self.index_jauge][self.index_pic_select]
-            self.curve_zoom_pic.setData(S.wnb, y_pic)
-            self.curve_spec_pic_select.setData(S.wnb, y_pic)
-            self.curve_zoom_data.setData(S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
-        else:
-            self.curve_zoom_pic.setData([], [])
-            self.curve_spec_pic_select.setData([], [])
-            if hasattr(S, "wnb") and hasattr(S, "spec"):
-                self.curve_zoom_data.setData(S.wnb, S.spec)
-            else:
-                self.curve_zoom_data.setData([], [])
-
-        # Contraindre aussi le ViewBox du zoom
-        if hasattr(S, "wnb") and hasattr(S, "spec"):
-            xz = np.asarray(S.wnb)
-            yz = np.asarray(S.spec)
-            vb_zoom = self.pg_zoom.getViewBox()
-            self._set_viewbox_limits_from_data(vb_zoom, xz, yz, padding=0.02)
-
-            if not self._zoom_limits_initialized:
-                try:
-                    vb_zoom.setXRange(float(xz[0]), float(xz[-1]), padding=0.02)
-                except Exception as e:
-                    print("Zoom XRange error:", e)
-                self._zoom_limits_initialized = True
 
     def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
         """
@@ -1883,7 +1846,7 @@ class MainWindow(QMainWindow):
             return
 
         # frame : np.array 2D ou 3D
-        self.img_item.setImage(frame.T, autoLevels=True)  # ou sans .T suivant orientation
+        self.img_item.setImage(frame, autoLevels=True)  # ou sans .T suivant orientation
 
         # Lignes verticales
         self.line_t_P.setPos(t)
@@ -2436,9 +2399,7 @@ class MainWindow(QMainWindow):
             self.ParampicLayout.addLayout(layh)
 
             self.coef_dynamic_label.append(coef_label)
-            self.coef_dynamic_spinbox.append(spinbox_coef)
-
-    
+            self.coef_dynamic_spinbox.append(spinbox_coef)   
             
     def f_lambda0(self):
         lambda0=str(self.Spectrum.Gauges[self.index_jauge].lamb0)
@@ -2910,7 +2871,6 @@ class MainWindow(QMainWindow):
         self.index_pic_select = save_pic
         self.LOAD_Gauge()
         self.Print_fit_start()
-
 
     def Baseline_spectrum(self):
         param = [float(self.param_filtre_1_entry.text()), float(self.param_filtre_2_entry.text())]
@@ -4039,7 +3999,39 @@ class MainWindow(QMainWindow):
         )
 
         # Le zoom et la superposition du pic sélectionné sont gérés par _refresh_spectrum_view()
-        self.Print_fit_start()
+        # 5) Zoom (on prend la même zone que le pic sélectionné ou la zone globale)
+        S = self.Spectrum
+        if (
+            self.index_jauge >= 0
+            and self.index_pic_select >= 0
+            and self.list_y_fit_start
+            and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select
+        ):
+            y_pic = self.list_y_fit_start[self.index_jauge][self.index_pic_select]
+            self.curve_zoom_pic.setData(S.wnb, y_pic)
+            self.curve_spec_pic_select.setData(S.wnb, y_pic)
+            self.curve_zoom_data.setData(S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
+        else:
+            self.curve_zoom_pic.setData([], [])
+            self.curve_spec_pic_select.setData([], [])
+            if hasattr(S, "wnb") and hasattr(S, "spec"):
+                self.curve_zoom_data.setData(S.wnb, S.spec)
+            else:
+                self.curve_zoom_data.setData([], [])
+
+        # Contraindre aussi le ViewBox du zoom
+        if hasattr(S, "wnb") and hasattr(S, "spec"):
+            xz = np.asarray(S.wnb)
+            yz = np.asarray(S.spec)
+            vb_zoom = self.pg_zoom.getViewBox()
+            self._set_viewbox_limits_from_data(vb_zoom, xz, yz, padding=0.02)
+
+            if not self._zoom_limits_initialized:
+                try:
+                    vb_zoom.setXRange(float(xz[0]), float(xz[-1]), padding=0.02)
+                except Exception as e:
+                    print("Zoom XRange error:", e)
+                self._zoom_limits_initialized = True
 
     def f_pic_fit(self):
         n_sigma = int(self.sigma_pic_fit_entry.value())
@@ -4181,6 +4173,7 @@ class MainWindow(QMainWindow):
         - index_start / index_stop définis dans des spinbox,
         - pour i > index_start, on copie les Gauges du spectre i-1 vers i
         pour utiliser le fit précédent comme point de départ.
+        - Affiche une barre de progression avec bouton Stop.
         """
         if self.RUN is None:
             print("no CED X LOAD")
@@ -4215,6 +4208,7 @@ class MainWindow(QMainWindow):
             print("No Gauges on starting spectrum for multi-fit chain.")
             return
 
+        # Message dans la zone de texte
         self.text_box_msg.setText(
             f"Multi-fit chaîné en cours : spectres {index_start} → {index_stop}."
         )
@@ -4222,42 +4216,75 @@ class MainWindow(QMainWindow):
         # On garde l'index initial pour revenir dessus ensuite
         original_index_spec = self.index_spec
 
-        # Boucle sur les spectres
-        for i in range(index_start, index_stop + 1):
-            print(f"Multi-fit : spectre {i}/{index_stop}")
+        # ----- DIALOGUE DE PROGRESSION -----
+        n_tot = index_stop - index_start + 1
+        dlg = ProgressDialog(
+            figs=None,              # tu peux passer des figs si tu veux
+            cancel_text="Stop",
+            value=0,
+            Gauges=None,
+            parent=self
+        )
+        dlg.setLabelText(f"Multi-fit : spectres {index_start} → {index_stop}")
+        dlg.setValue(0)
+        dlg.show()
+        QApplication.processEvents()
 
-            # Pour i > index_start : on copie les Gauges du spectre précédent
-            if i > index_start:
-                prev_spec = self.RUN.Spectra[i - 1]
-                curr_spec = self.RUN.Spectra[i]
+        canceled = False
 
-                # On écrase les Gauges actuelles par une copie profonde du spectre précédent
-                curr_spec.Gauges = copy.deepcopy(prev_spec.Gauges)
+        # ----- BOUCLE SUR LES SPECTRES -----
+        try:
+            for k, i in enumerate(range(index_start, index_stop + 1), start=1):
+                # Vérifier si l'utilisateur a cliqué sur Stop
+                if dlg.wasCanceled():
+                    canceled = True
+                    print("Multi-fit: canceled by user.")
+                    break
 
-                # On remet le modèle à None pour forcer LOAD_Spectrum à reconstruire
-                curr_spec.model   = None
-                curr_spec.bit_fit = False
+                print(f"Multi-fit : spectre {i}/{index_stop}")
 
-            # Chargement du spectre i dans l'UI + reconstruction de Param0
-            self.bit_bypass = True      # pour éviter trop de boîtes de dialogue
-            try:
-                self.LOAD_Spectrum(Spectrum=self.RUN.Spectra[i])
-            except Exception as e:
-                print(f"Error loading spectrum {i}:", e)
-                continue   # on passe au suivant, mais on ne stoppe pas toute la boucle
+                # Mise à jour du texte et de la barre de progression
+                dlg.setLabelText(f"Fit du spectre {i} / {index_stop}")
+                percent = int(100 * k / n_tot)
+                dlg.setValue(percent)
+                QApplication.processEvents()
 
-            # Fit automatique avec les paramètres initiaux venant de prev_spec
-            try:
-                self.FIT_lmfitVScurvfit()
-            except Exception as e:
-                print(f"Error during fit on spectrum {i}:", e)
+                # Pour i > index_start : on copie les Gauges du spectre précédent
+                if i > index_start:
+                    prev_spec = self.RUN.Spectra[i - 1]
+                    curr_spec = self.RUN.Spectra[i]
 
-            # On sauvegarde le spectre fité dans RUN
-            self.RUN.Spectra[i] = copy.deepcopy(self.Spectrum)
+                    # On écrase les Gauges actuelles par une copie profonde du spectre précédent
+                    curr_spec.Gauges = copy.deepcopy(prev_spec.Gauges)
 
-            self.bit_bypass = False
+                    # On remet le modèle à None pour forcer LOAD_Spectrum à reconstruire
+                    curr_spec.model   = None
+                    curr_spec.bit_fit = False
 
-        # Après la boucle, on peut recalculer le Summary global du CEDd
+                # Chargement du spectre i dans l'UI + reconstruction de Param0
+                self.bit_bypass = True      # pour éviter trop de boîtes de dialogue
+                try:
+                    self.LOAD_Spectrum(Spectrum=self.RUN.Spectra[i])
+                except Exception as e:
+                    print(f"Error loading spectrum {i}:", e)
+                    continue   # on passe au suivant, mais on ne stoppe pas toute la boucle
+                
+                # Fit automatique avec les paramètres initiaux venant de prev_spec
+                try:
+                    self.bit_bypass = True
+                    self.FIT_lmfitVScurvfit()
+                except Exception as e:
+                    print(f"Error during fit on spectrum {i}:", e)
+                self.bit_bypass = False
+
+                # On sauvegarde le spectre fitté dans RUN
+                self.RUN.Spectra[i] = copy.deepcopy(self.Spectrum)
+
+        finally:
+            # On ferme le dialogue quoi qu'il arrive
+            dlg.close()
+
+        # ----- APRÈS LA BOUCLE : TOUJOURS Corr_Summary + REFRESH -----
         try:
             self.RUN.Corr_Summary(All=True)
         except Exception as e:
@@ -4269,51 +4296,10 @@ class MainWindow(QMainWindow):
         self.LOAD_Spectrum(Spectrum=self.Spectrum)
         self.REFRESH()
 
-        self.text_box_msg.setText("Multi-fit chaîné terminé.")
-
-
-    def _show_multi_fit_dialog(self, i, step, total_steps):
-        """
-        Affiche un dialogue avec les spectres courants et permet :
-        - soit de continuer (et éventuellement de modifier les jauges),
-        - soit de stopper le multi-fit proprement.
-        Retourne:
-        True  -> continuer la boucle
-        False -> arrêter la boucle
-        """
-        # On peut afficher par ex. le spectre courant, ou courant+précédent
-        try:
-            figs = [self.Spectrum.Print(return_fig=True)]
-        except TypeError:
-            # Si ton Print ne prend pas return_fig, adapte ici
-            figs = []
-
-        dlg = ProgressDialog(
-            figs,
-            value=int(step / max(1, total_steps) * 100),
-            Gauges=self.Spectrum.Gauges
-        )
-
-        dlg.exec_()
-        # On suppose la même API que dans initData
-        result, params, inter = dlg.get_user_choice()
-
-        if not result:
-            # L’utilisateur a demandé d’arrêter
-            return False
-
-        # Si l’utilisateur a éventuellement retouché les paramètres, on les applique
-        # pour la suite du multi-fit
-        for j, p_G in enumerate(params):
-            for k, p_p in enumerate(p_G):
-                # p_p ~ [ctr, sigma] d’après ton initData
-                self.Spectrum.Gauges[j].pics[k].Update(
-                    ctr=p_p[0],
-                    sigma=p_p[1],
-                    inter=inter
-                )
-
-        return True
+        if canceled:
+            self.text_box_msg.setText("Multi-fit chaîné interrompu par l'utilisateur.")
+        else:
+            self.text_box_msg.setText("Multi-fit chaîné terminé.")
 
     def add_zone(self):
         return print("A CODER")
