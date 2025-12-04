@@ -838,6 +838,7 @@ class MainWindow(QMainWindow):
             "#ffcccc", "#ffe9cc", "#fdffcc", "#e3ffcc", "#ccffef",
             "#ccf0ff", "#ccd6ff", "#e1ccff", "#fbccff", "#ffcce8"
         ]
+        self.color = []
 
         # ================== INTÉGRATION UI ==================
         SpectraBoxFirstLayout.addWidget(self.pg_spec)
@@ -2873,7 +2874,47 @@ class MainWindow(QMainWindow):
     def Read_RUN(self,RUN):
         l_P,l_sigma_P,l_lambda,l_fwhm=[],[],[],[]
         l_spe,l_T,l_sigma_T=[],[],[]
-        Gauges_RUN=RUN.Gauges_init 
+        Gauges_RUN=RUN.Gauges_init
+
+        Summary = getattr(RUN, "Summary", None)
+
+        # --- 1) Cas Summary vide ou None : on renvoie des tableaux vides mais cohérents
+        if Summary is None or Summary.empty:
+            # Time / spectre_number
+            if RUN.Time_spectrum is not None:
+                dt_n = len(RUN.Time_spectrum) - len(RUN.list_nspec)
+                if dt_n > 0:
+                    Time = [RUN.Time_spectrum[i] for i in RUN.list_nspec]
+                elif dt_n < 0:
+                    dt = np.mean(np.diff(RUN.Time_spectrum))
+                    Time = np.array(list(RUN.Time_spectrum) +
+                                    [RUN.Time_spectrum[-1] + dt*(1+i) for i in range(abs(dt_n))])
+                else:
+                    Time = RUN.Time_spectrum
+            else:
+                Time = RUN.list_nspec
+
+            spectre_number = RUN.list_nspec
+
+            # Oscillo éventuel
+            if RUN.data_Oscillo is not None:
+                time_amp = np.array(RUN.data_Oscillo['Time'])
+                b = np.array(RUN.data_Oscillo['Channel3'])
+                amp = CL.savgol_filter(b, 101, 2)
+            else:
+                time_amp = np.array([])
+                amp = np.array([])
+
+            # Pour chaque jauge, on met des arrays vides
+            for G in Gauges_RUN:
+                l_P.append(np.array([]))
+                l_sigma_P.append(np.array([]))
+                l_lambda.append(np.array([]))
+                l_fwhm.append(np.array([]))
+
+            # Pas de spe / T au début
+            return l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN
+
         for G in Gauges_RUN :
             name=G.name
             name_spe=G.name_spe
