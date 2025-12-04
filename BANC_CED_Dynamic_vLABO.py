@@ -40,6 +40,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from datetime import datetime
 
 import copy
+from dataclasses import dataclass, field
+from typing import Optional
 from scipy.optimize import curve_fit
 import cv2
 import io
@@ -276,7 +278,7 @@ class EditableDelegate(QStyledItemDelegate):
         editor = QLineEdit(parent)
         return editor
 
-class Variables: 
+class Variables:
     def __init__(self):
         self.valeurs_boutons = [True,True, True,True,True,True,True]
         self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
@@ -287,6 +289,28 @@ class Variables:
         self.CEDd_save=None
         self.Gauge_select=None
         self.data_Spectro=None
+
+
+@dataclass
+class RunViewState:
+    """État graphique associé à un CEDd (remplace les listes parallèles)."""
+
+    ced: CL.CEDd
+    color: str
+    time: list = field(default_factory=list)
+    spectre_number: list = field(default_factory=list)
+    curves_P: list = field(default_factory=list)
+    curves_dPdt: list = field(default_factory=list)
+    curves_sigma: list = field(default_factory=list)
+    curves_T: list = field(default_factory=list)
+    curves_dlambda: list = field(default_factory=list)
+    piezo_curve: object = None
+    corr_curve: object = None
+    cap: object = None
+    t_cam: list = field(default_factory=list)
+    index_cam: list = field(default_factory=list)
+    correlations: list = field(default_factory=list)
+    list_item: Optional[QListWidgetItem] = None
 
 
 class MainWindow(QMainWindow):
@@ -343,9 +367,13 @@ class MainWindow(QMainWindow):
         self.viewer = None
         self.bit_c_reduite = True
 
-        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = index_select interne
-        self.variables.liste_objets = []  # liste des CEDd chargés
-        self.index_select = -1    
+        # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
+        self.runs = {}
+        self.current_run_id = None
+
+        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = run_id
+        self.variables.liste_objets = []  # liste des CEDd chargés (legacy)
+        self.index_select = -1
 
         # Initialisation logique légère
         self.load_latest_file()
@@ -355,6 +383,73 @@ class MainWindow(QMainWindow):
         if Setup_mode is True:
             self._run_setup_mode()
             print("setup mode RUN")
+
+    # ==================================================================
+    # ===============   UTILITAIRES ÉTAT DE RUN   ======================
+    # ==================================================================
+    def _get_run_id(self, ced):
+        """Retourne une clé stable pour un CEDd donné."""
+
+        if hasattr(ced, "CEDd_path") and ced.CEDd_path:
+            return ced.CEDd_path
+        return f"memory_{id(ced)}"
+
+    def _get_state_for_run(self, run_id: Optional[str] = None) -> Optional[RunViewState]:
+        if run_id is None:
+            run_id = self.current_run_id
+        return self.runs.get(run_id)
+
+    def _save_current_run(self):
+        """Sauvegarde le RUN courant dans son état RunViewState."""
+
+        state = self._get_state_for_run()
+        if state is not None and self.RUN is not None:
+            state.ced = copy.deepcopy(self.RUN)
+
+    def _finalize_run_selection(self, state: RunViewState, name_select: str):
+        """Replace l'ancienne logique basée sur index_select par l'état RunViewState."""
+
+        self.current_run_id = self._get_run_id(state.ced)
+        self.RUN = copy.deepcopy(state.ced)
+        self.index_select = self.liste_objets_widget.row(state.list_item) if state.list_item is not None else -1
+
+        if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
+            try:
+                titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
+            except Exception as e:
+                print("fps log ERROR:", e)
+                titre = "Movie :" + str(round(self.RUN.fps, 2)) + "fps"
+        else:
+            titre = "No Movie"
+
+        self.setWindowTitle(titre)
+
+        if state.index_cam:
+            self.current_index = len(state.index_cam) // 2
+            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
+            self.slider.setValue(self.current_index)
+
+        if state.time:
+            x_min, x_max = min(state.time), max(state.time)
+            self.pg_P.setXRange(x_min, x_max, padding=0.01)
+            self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
+            self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
+            self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
+
+        self._update_movie_frame()
+
+        self.label_CED.setText("CEDd " + name_select + " select")
+
+        self.CLEAR_ALL()
+        self.listbox_Spec.clear()
+        for s in state.ced.list_nspec:
+            self.listbox_Spec.addItem(str(s))
+
+        self.index_spec = 0
+        self.bit_bypass = True
+        self.LOAD_Spectrum()
+        self.bit_bypass = False
+        self.Update_Print()
 
     # ==================================================================
     # ===============  CONFIG FENÊTRE & LAYOUT GÉNÉRAL  ================
@@ -1663,21 +1758,20 @@ class MainWindow(QMainWindow):
 
     def f_CEDd_update_print(self):
         """Met à jour texte + sélection de spectre en fonction de x_clic / t."""
-        if self.RUN is None or self.index_select < 0:
-            return
-        if self.index_select >= len(self.time):
+        state = self._get_state_for_run()
+        if self.RUN is None or state is None:
             return
 
         # temps courant pour le film (si t_cam dispo)
-        if self.RUN.Movie is not None and self.t_cam and self.t_cam[self.index_select]:
-            t = self.t_cam[self.index_select][self.current_index]
+        if self.RUN.Movie is not None and state.t_cam:
+            t = state.t_cam[self.current_index]
         else:
             t = 0.0
 
         # spectre le plus proche en temps
-        times = np.array(self.time[self.index_select])
+        times = np.array(state.time)
         idx_spec = int(np.argmin(np.abs(times - self.x_clic)))
-        spec_nb = self.spectre_number[self.index_select][idx_spec]
+        spec_nb = state.spectre_number[idx_spec]
 
         if self.spectrum_select_box.isChecked() and int(spec_nb) != self.index_spec:
             self.index_spec = int(spec_nb)
@@ -1751,9 +1845,15 @@ class MainWindow(QMainWindow):
             self.line_nspec.setPos(x)
 
         # Mise à jour frame film si la case est cochée
-        if self.movie_select_box.isChecked() and self.RUN is not None \
-        and self.RUN.Movie is not None and self.t_cam and self.t_cam[self.index_select]:
-            t_array = np.array(self.t_cam[self.index_select])
+        state = self._get_state_for_run()
+        if (
+            self.movie_select_box.isChecked()
+            and self.RUN is not None
+            and state is not None
+            and self.RUN.Movie is not None
+            and state.t_cam
+        ):
+            t_array = np.array(state.t_cam)
             self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
             self.slider.blockSignals(True)
             self.slider.setValue(self.current_index)
@@ -1767,21 +1867,18 @@ class MainWindow(QMainWindow):
         self._update_movie_frame()
 
     def _update_movie_frame(self):
-        if self.index_select < 0:
-            return
-        if self.index_select >= len(self.index_cam):
-            return
-        if not self.index_cam[self.index_select]:
+        state = self._get_state_for_run()
+        if state is None or not state.index_cam:
             return
 
-        idx_list = self.index_cam[self.index_select]
+        idx_list = state.index_cam
         if self.current_index < 0 or self.current_index >= len(idx_list):
             return
 
         frame_idx = idx_list[self.current_index]
-        t = self.t_cam[self.index_select][self.current_index]
+        t = state.t_cam[self.current_index]
 
-        frame = self.read_frame(self.cap[self.index_select], frame_idx)
+        frame = self.read_frame(state.cap, frame_idx)
         if frame is None:
             return
 
@@ -1792,10 +1889,9 @@ class MainWindow(QMainWindow):
         self.line_t_P.setPos(t)
         self.line_t_dPdt.setPos(t)
         self.line_t_sigma.setPos(t)
-        if self.spectre_number and len(self.spectre_number) > self.index_select:
-            if len(self.spectre_number[self.index_select]) > self.current_index:
-                nspec = self.spectre_number[self.index_select][self.current_index]
-                self.line_nspec.setPos(nspec)
+        if state.spectre_number and len(state.spectre_number) > self.current_index:
+            nspec = state.spectre_number[self.current_index]
+            self.line_nspec.setPos(nspec)
 
         # Texte
         txt = (
@@ -1813,9 +1909,10 @@ class MainWindow(QMainWindow):
             self._update_movie_frame()
 
     def next_image(self):
-        if self.index_select < 0 or self.index_select >= len(self.index_cam):
+        state = self._get_state_for_run()
+        if state is None:
             return
-        nb = len(self.index_cam[self.index_select])
+        nb = len(state.index_cam)
         if self.current_index < nb - 1:
             self.current_index += 1
             self.slider.blockSignals(True)
@@ -1835,12 +1932,13 @@ class MainWindow(QMainWindow):
             self.timerMovie.stop()
 
     def play_movie(self):
-        if self.index_select < 0 or self.index_select >= len(self.index_cam):
+        state = self._get_state_for_run()
+        if state is None:
             self.timerMovie.stop()
             self.playing_movie = False
             return
 
-        nb = len(self.index_cam[self.index_select])
+        nb = len(state.index_cam)
         if nb == 0:
             self.timerMovie.stop()
             self.playing_movie = False
@@ -1857,10 +1955,11 @@ class MainWindow(QMainWindow):
 
     def f_zone_movie(self):
         """Sélection / reset d'une zone temporelle de film (2 bornes)."""
-        if self.index_select < 0 or not self.t_cam or not self.t_cam[self.index_select]:
+        state = self._get_state_for_run()
+        if state is None or not state.t_cam:
             return
 
-        t_current = self.t_cam[self.index_select][self.current_index]
+        t_current = state.t_cam[self.current_index]
 
         if self.zone_movie[0] is None:
             self.zone_movie[0] = t_current
@@ -1873,15 +1972,17 @@ class MainWindow(QMainWindow):
         else:
             # Reset
             self.zone_movie = [None, None]
-            t_min = self.t_cam[self.index_select][0]
-            t_max = self.t_cam[self.index_select][-1]
+            t_min = state.t_cam[0]
+            t_max = state.t_cam[-1]
             self.zone_movie_lines[0].setPos(t_min)
             self.zone_movie_lines[1].setPos(t_max)
 
 
     def update(self,val): # pour la barre de défilmetn des images
         self.current_index=int(val)
-        self.Num_im=self.index_cam[self.index_select][self.current_index]
+        state = self._get_state_for_run()
+        if state and state.index_cam:
+            self.Num_im=state.index_cam[self.current_index]
         self._update_movie_frame()
 
     def read_frame(self,cap,frame_number,unit="rgb"):
@@ -2179,7 +2280,8 @@ class MainWindow(QMainWindow):
             print("spinbox_t_move error:", e)
 
     def Update_Print(self):
-        if self.index_select == -1 or self.index_select >= len(self.curves_P):
+        state = self._get_state_for_run()
+        if state is None:
             return
 
         data = []
@@ -2189,47 +2291,45 @@ class MainWindow(QMainWindow):
         show_corr = self.var_bouton[3].isChecked()
         show_P = self.var_bouton[6].isChecked()
 
-        for curve in self.curves_T[self.index_select]:
+        for curve in state.curves_T:
             curve.setVisible(show_T)
             if show_T:
                 y = curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
-        for curve in self.curves_P[self.index_select]:
+        for curve in state.curves_P:
             curve.setVisible(show_P)
             if show_P:
                 y = curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
-        for curve in self.curves_dPdt[self.index_select]:
+        for curve in state.curves_dPdt:
             curve.setVisible(show_dPdt)
             if show_dPdt:
                 y = curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
-        for curve in self.curves_sigma[self.index_select]:
+        for curve in state.curves_sigma:
             curve.setVisible(show_P)
             if show_P:
                 y = curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
-        if self.curve_piezo_list and self.index_select < len(self.curve_piezo_list):
-            piezo_curve = self.curve_piezo_list[self.index_select]
-            piezo_curve.setVisible(show_piezo)
+        if state.piezo_curve is not None:
+            state.piezo_curve.setVisible(show_piezo)
             if show_piezo:
-                y = piezo_curve.getData()[1]
+                y = state.piezo_curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
-        if self.curve_corr_list and self.index_select < len(self.curve_corr_list):
-            corr_curve = self.curve_corr_list[self.index_select]
-            corr_curve.setVisible(show_corr)
+        if state.corr_curve is not None:
+            state.corr_curve.setVisible(show_corr)
             if show_corr:
-                y = corr_curve.getData()[1]
+                y = state.corr_curve.getData()[1]
                 if y is not None:
                     data.extend(y.tolist())
 
@@ -2961,12 +3061,23 @@ class MainWindow(QMainWindow):
         return cap,fps,nb_frames
 
     def SELECT_CEDd(self,item):
-        try:
-            self.variables.liste_objets[self.index_select]=copy.deepcopy(self.RUN)
-        except Exception:
-            self.text_box_msg.setText("RUN NOT SAVE")
-        self.index_select=self.liste_objets_widget.row(item)
-        self.RUN=copy.deepcopy(self.variables.liste_objets[self.index_select])
+        self._save_current_run()
+
+        run_id = item.data(Qt.UserRole)
+        if run_id is None:
+            self.text_box_msg.setText("RUN introuvable (clé manquante)")
+            return
+
+        state = self.runs.get(run_id)
+        if state is None:
+            self.text_box_msg.setText("RUN introuvable")
+            return
+
+        # Synchronise les pointeurs courants
+        self.current_run_id = run_id
+        self.RUN = copy.deepcopy(state.ced)
+        self.index_select = self.liste_objets_widget.row(item)
+
         if hasattr(self.RUN,"fps") and self.RUN.fps is not None:
             try:
                 titre="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
@@ -2977,17 +3088,14 @@ class MainWindow(QMainWindow):
             titre="No Movie"
 
         self.setWindowTitle(titre)
-        if self.index_select < len(self.index_cam):
-            if self.index_cam[self.index_select]:
-                self.current_index = len(self.index_cam[self.index_select])//2
-            else:
-                self.current_index = 0
-            self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
+        if state.index_cam:
+            self.current_index = len(state.index_cam)//2 if state.index_cam else 0
+            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
         self._update_movie_frame()
         self.label_CED.setText( "CEDd "+item.text()+" select")
-        if self.index_select < len(self.time) and self.time[self.index_select]:
-            x_min,x_max=min(self.time[self.index_select]),max(self.time[self.index_select])
+        if state.time:
+            x_min,x_max=min(state.time),max(state.time)
             self.pg_P.setXRange(x_min,x_max,padding=0.01)
             self.pg_dPdt.setXRange(x_min,x_max,padding=0.01)
             self.pg_sigma.setXRange(x_min,x_max,padding=0.01)
@@ -3001,10 +3109,15 @@ class MainWindow(QMainWindow):
         - Si objet_run est donné (création d'un nouveau CEDd) :
             -> on l'ajoute à la liste interne, sans passer par la liste de fichiers
         """
-
         # Sécu : s'assurer que la map existe
         if not hasattr(self, "file_index_map"):
             self.file_index_map = {}
+
+        self._save_current_run()
+
+        run_id = None
+        state = None
+        name_select = None
 
         # ------------------------------------------------------------------
         # CAS 1 : on vient d'un clic dans la liste de fichiers (item non None)
@@ -3013,14 +3126,6 @@ class MainWindow(QMainWindow):
             chemin_fichier = os.path.join(self.variables.dossier_selectionne, item.text())
             index_file = self.liste_fichiers.row(item)
 
-            # Si on change de CEDd, on sauvegarde le précédent
-            if self.index_select >= 0 and self.index_select < len(self.variables.liste_objets):
-                try:
-                    self.variables.liste_objets[self.index_select] = copy.deepcopy(self.RUN)
-                except Exception as e:
-                    print("PRINT_CEDd: erreur sauvegarde RUN courant :", e)
-
-            # Fichier jamais ouvert -> on charge depuis le disque
             if index_file not in self.file_index_map:
                 try:
                     objet_run = CL.LOAD_CEDd(chemin_fichier)
@@ -3028,226 +3133,153 @@ class MainWindow(QMainWindow):
                     print("Erreur LOAD_CEDd:", e)
                     self.text_box_msg.setText(f"Erreur chargement CEDd : {e}")
                     return
-
-                # On ajoute dans la liste des objets
-                self.variables.liste_objets.append(objet_run)
-                self.index_select = len(self.variables.liste_objets) - 1
-
-                # On mémorise la correspondance fichier -> index interne
-                self.file_index_map[index_file] = self.index_select
-
-            # Fichier déjà ouvert -> on récupère l'objet en mémoire
-            else:
-                self.index_select = self.file_index_map[index_file]
-                self.RUN = copy.deepcopy(self.variables.liste_objets[self.index_select])
-
-                # Partie ancienne "else" : mise à jour des limites / film pour RUN déjà chargé
-                if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
-                    try:
-                        titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
-                    except Exception as e:
-                        print("fps log ERROR:", e)
-                        titre = "Movie :" + str(round(self.RUN.fps, 2)) + "fps"
-                else:
-                    titre = "No Movie"
-
-                self.setWindowTitle(titre)
-
-                # Sélection du milieu de la séquence
-                if self.index_select < len(self.t_cam) and self.t_cam[self.index_select]:
-                    self.current_index = len(self.t_cam[self.index_select]) // 2
-                    self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
-                    self.slider.setValue(self.current_index)
-                    self.Num_im = self.index_cam[self.index_select][self.current_index]
-                    Frame = self.read_frame(self.cap[self.index_select], self.Num_im)
-                    self.img_item.setImage(np.array(Frame).T, autoLevels=True)
-                    self._update_movie_frame()
-
-                    x_min, x_max = min(self.t_cam[self.index_select]), max(self.t_cam[self.index_select])
-                    self.pg_P.setXRange(x_min, x_max, padding=0.01)
-                    self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
-                    self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
-                    self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
-
+                run_id = self._get_run_id(objet_run)
+                self.file_index_map[index_file] = run_id
                 name_select = item.text()
-
+            else:
+                run_id = self.file_index_map[index_file]
+                state = self.runs.get(run_id)
                 name_select = item.text()
 
         # ------------------------------------------------------------------
         # CAS 2 : on reçoit directement un CEDd (objet_run != None)
-        # (p.ex. CREAT_new_CEDd(...) qui appelle PRINT_CEDd(objet_run=New_CEDd))
         # ------------------------------------------------------------------
         elif objet_run is not None:
-            # On sauve l'ancien RUN si besoin
-            if self.index_select >= 0 and self.index_select < len(self.variables.liste_objets):
-                try:
-                    self.variables.liste_objets[self.index_select] = copy.deepcopy(self.RUN)
-                except Exception as e:
-                    print("PRINT_CEDd: erreur sauvegarde RUN courant (objet_run) :", e)
-
-            # On ajoute ce nouveau CEDd dans la liste
-            self.variables.liste_objets.append(objet_run)
-            self.index_select = len(self.variables.liste_objets) - 1
-            self.RUN = objet_run
-            # Pas de mapping dans file_index_map ici (pas lié à un fichier de la liste)
-            name_select = CL.os.path.basename(self.RUN.CEDd_path) if hasattr(self.RUN, "CEDd_path") else "CEDd_new"
-
+            run_id = self._get_run_id(objet_run)
+            state = self.runs.get(run_id)
+            name_select = CL.os.path.basename(objet_run.CEDd_path) if hasattr(objet_run, "CEDd_path") else "CEDd_new"
         else:
-            # Ni item, ni objet_run -> rien à faire
+            return
+
+        # Si un état existe déjà : on réutilise les courbes et on restaure l'UI
+        if state is not None:
+            self._finalize_run_selection(state, name_select)
             return
 
         # ------------------------------------------------------------------
-        # À partir d'ici : on a self.RUN défini et self.index_select cohérent
-        # On exécute tout ton bloc existant qui était sous : if type(objet_run) is CL.CEDd:
+        # Création d'un nouvel état RunViewState
         # ------------------------------------------------------------------
-        if isinstance(self.RUN, CL.CEDd):
-            # Couleur
-            c = self.c_m[0]
-            self.color.append(c)
+        if objet_run is None:
+            return
+
+        self.variables.liste_objets.append(objet_run)
+        self.index_select = len(self.variables.liste_objets) - 1
+        self.RUN = objet_run
+
+        # Couleur dédiée à ce run
+        c = self.c_m[0] if self.c_m else "#ffffff"
+        self.color.append(c)
+        if self.c_m:
             del self.c_m[0]
 
-            # Creation item dans la liste des CEDd
-            name_select = CL.os.path.basename(self.RUN.CEDd_path)
-            item = QListWidgetItem(name_select)
-            item.setBackground(QColor(c))
+        name_select = name_select or CL.os.path.basename(self.RUN.CEDd_path)
+        item_run = QListWidgetItem(name_select)
+        item_run.setBackground(QColor(c))
+        dark_c = mcolors.rgb2hex(
+            tuple(min(1, cc * 0.5) for cc in mcolors.hex2color(c))
+        )
+        item_run.setForeground(QColor(dark_c))
+        item_run.setData(Qt.UserRole, run_id)
+        self.liste_objets_widget.addItem(item_run)
 
-            dark_c = mcolors.rgb2hex(
-                tuple(min(1, cc * 0.5) for cc in mcolors.hex2color(c))
+        # Lecture des données CEDd
+        l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
+
+        # Axes temps
+        self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
+        self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
+        self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
+        self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
+
+        state = RunViewState(ced=self.RUN, color=c)
+        state.time = Time
+        state.spectre_number = self.RUN.list_nspec
+        state.list_item = item_run
+
+        # Courbes P / dPdt / sigma / T
+        motif_jauge = ["+", "o", "*"]
+        for i, G in enumerate(Gauges_RUN):
+            l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
+            dps = [
+                (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                for x in range(2, len(l_p_filtre) - 2)
+            ]
+            state.curves_P.append(
+                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
             )
-            item.setForeground(QColor(dark_c))
-            self.liste_objets_widget.addItem(item)
+            state.curves_dPdt.append(
+                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+            )
+            state.curves_sigma.append(
+                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+            )
+        if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
+            state.curves_T.append(
+                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
+            )
+        else:
+            state.curves_T.append(self.pg_dPdt.plot([], []))
 
-            # Lecture des données CEDd
-            l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
+        # Piezo
+        if self.RUN.data_Oscillo is not None:
+            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c))
+        else:
+            state.piezo_curve = self.pg_P.plot([], [])
 
-            # Axes temps
-            self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
-
-            self.time.append(Time)
-            self.spectre_number.append(self.RUN.list_nspec)
-            self.curves_P.append([])
-            self.curves_dPdt.append([])
-            self.curves_sigma.append([])
-            self.curves_T.append([])
-            self.curves_dlambda.append([])
-
-            motif_jauge = ["+", "o", "*"]
-            l_c = []
-
-            for i, G in enumerate(Gauges_RUN):
-                l_c.append(G.color_print[0])
-                l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
-                dps = [
-                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
-                    for x in range(2, len(l_p_filtre) - 2)
-                ]
-                self.curves_P[-1].append(
-                    self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
+        for spe in l_spe:
+            if spe is not []:
+                state.curves_dlambda.append(
+                    self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
                 )
-                self.curves_dPdt[-1].append(
-                    self.pg_dPdt.plot(self.time[-1][2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-                )
-                self.curves_sigma[-1].append(
-                    self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-                )
-            if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
-                self.curves_T[-1].append(
-                    self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
-                )
+
+        # Film
+        if self.RUN.folder_Movie is not None:
+            t0_movie = getattr(self.RUN, 't0_movie', 0)
+            cap, fps, nb_frames = self.Read_Movie(self.RUN)
+            state.cap = cap
+            gray_l = []
+            nb_c = 5
+
+            for i in range(nb_frames):
+                t_c = i / fps + t0_movie
+                if Time[0] < t_c < Time[-1]:
+                    state.t_cam.append(t_c)
+                    state.index_cam.append(i)
+                    if self.var_bouton[3].isChecked():
+                        correlation = 0
+                        gray_curr = self.read_frame(cap, i, unit="gray")
+                        for gray in gray_l:
+                            correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
+                        state.correlations.append(correlation)
+                        if len(gray_l) > nb_c:
+                            del gray_l[0]
+                        gray_l.append(gray_curr)
+
+            if self.var_bouton[3].isChecked() and state.correlations:
+                state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
+                state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
             else:
-                self.curves_T[-1].append(self.pg_dPdt.plot([], []))
-            # Piezo
-            if self.RUN.data_Oscillo is not None:
-                self.curve_piezo_list.append(self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c)))
-            else:
-                self.curve_piezo_list.append(self.pg_P.plot([], []))
-            for spe in l_spe:
-                if spe is not []:
-                    self.curves_dlambda[-1].append(
-                        self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
-                    )
-            # Film
-            if self.RUN.folder_Movie is not None:
-                t0_movie = getattr(self.RUN, 't0_movie', 0)
-                cap, fps, nb_frames = self.Read_Movie(self.RUN)
-                self.cap.append(cap)
-                self.t_cam.append([])
-                self.correlations.append([])
-                self.index_cam.append([])
-                gray_l = []
-                nb_c = 5
+                state.corr_curve = self.pg_dPdt.plot([], [])
 
-                for i in range(nb_frames):
-                    t_c = i / fps + t0_movie
-                    if Time[0] < t_c < Time[-1]:
-                        self.t_cam[-1].append(t_c)
-                        self.index_cam[-1].append(i)
-                        if self.var_bouton[3].isChecked():
-                            correlation = 0
-                            gray_curr = self.read_frame(cap, i, unit="gray")
-                            for gray in gray_l:
-                                correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
-                            self.correlations[-1].append(correlation)
-                            if len(gray_l) > nb_c:
-                                del gray_l[0]
-                            gray_l.append(gray_curr)
-
-                if self.var_bouton[3].isChecked() and self.correlations[-1]:
-                    self.correlations[-1] = np.array(self.correlations[-1]) / max(abs(np.array(self.correlations[-1])))
-                    self.curve_corr_list.append(
-                        self.pg_dPdt.plot(self.t_cam[-1], self.correlations[-1], pen=pg.mkPen(c))
-                    )
-                else:
-                    self.curve_corr_list.append(self.pg_dPdt.plot([], []))
-
-                self.current_index = len(self.t_cam[-1]) // 2
-                self.Num_im = self.index_cam[-1][self.current_index]
-                t = self.t_cam[-1][self.current_index]
-
+            self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
+            if state.index_cam:
+                self.Num_im = state.index_cam[self.current_index]
+                t = state.t_cam[self.current_index]
                 Frame = self.read_frame(cap, self.Num_im)
-                self.img_item.setImage(np.array(Frame).T, autoLevels=True)
-                self.pg_text_label.setText(
-                    '$t_s$={}ms n°s={} <br>$t_i=${}µs n°i={} <br>P={}GPa T or dP/dt={} K or GPa/ms <br>dP/dt={}GPa/ms'.format(
-                        round(self.x1 * 1e3, 3),
-                        round(self.x5, 2),
-                        round(t * 1e6, 3),
-                        self.Num_im,
-                        round(self.y1, 2),
-                        round(self.y3, 2),
-                        0.0 if self.tstart == self.tend else round((self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3, 3)
-                    )
-                )
+                if Frame is not None:
+                    self.img_item.setImage(np.array(Frame).T, autoLevels=True)
 
-                self.line_t_P.setPos(t)
-                self.line_t_sigma.setPos(t)
-                self.line_t_dPdt.setPos(t)
-                self.line_nspec.setPos(t)
+            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
+            self.slider.setValue(self.current_index)
+            self._update_movie_frame()
+        else:
+            self.Num_im = 0
+            t = Time[0]
+            state.corr_curve = self.pg_dPdt.plot([], [])
 
-                self.slider.setMaximum(max(0, len(self.index_cam[self.index_select]) - 1))
-                self.slider.setValue(self.current_index)
-                self._update_movie_frame()
-
-            else:
-                self.Num_im, t = 0, Time[0]
-                self.curve_corr_list.append(self.pg_dPdt.plot([], []))
-            # Nettoyage et chargement du premier spectre
-            self.CLEAR_ALL()
-            self.RUN = self.variables.liste_objets[self.index_select]
-            self.listbox_Spec.clear()
-            for s in self.RUN.list_nspec:
-                self.listbox_Spec.addItem(str(s))
-
-            self.index_spec = 0
-            self.bit_bypass = True
-            self.LOAD_Spectrum()
-            self.bit_bypass = False
-            self.Update_Print()
-
-        # Label de CED sélectionné
-        self.label_CED.setText("CEDd " + name_select + " select")
+        # Enregistre l'état et finalise l'affichage
+        self.runs[run_id] = state
+        self._finalize_run_selection(state, name_select)
 
     def LOAD_Spectrum(self, item=None, Spectrum=None):
         """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
@@ -3429,70 +3461,78 @@ class MainWindow(QMainWindow):
 #########################################################################################################################################################################################
 #? COMMANDE UNLOAD
     def CLEAR_CEDd(self,item=None):
-        if self.bit_bypass is False:
-            # Fonction pour décharger l'objet Python sélectionné de la liste
-            index = self.liste_objets_widget.row(item)
-        else:
-            index=self.index_select
-        if self.index_select>=0:
-            if index < len(self.curves_T):
-                for curve in self.curves_T[index]:
-                    try:
-                        self.pg_dPdt.removeItem(curve)
-                    except Exception:
-                        pass
-                del self.curves_T[index]
-            if index < len(self.curves_P):
-                for curve in self.curves_P[index]:
-                    try:
-                        self.pg_P.removeItem(curve)
-                    except Exception:
-                        pass
-                del self.curves_P[index]
-            if index < len(self.curves_dPdt):
-                for curve in self.curves_dPdt[index]:
-                    try:
-                        self.pg_dPdt.removeItem(curve)
-                    except Exception:
-                        pass
-                del self.curves_dPdt[index]
-            if index < len(self.curves_sigma):
-                for curve in self.curves_sigma[index]:
-                    try:
-                        self.pg_sigma.removeItem(curve)
-                    except Exception:
-                        pass
-                del self.curves_sigma[index]
-            if index < len(self.curves_dlambda):
-                for curve in self.curves_dlambda[index]:
-                    try:
-                        self.pg_dlambda.removeItem(curve)
-                    except Exception:
-                        pass
-                del self.curves_dlambda[index]
-            if index < len(self.curve_piezo_list):
-                try:
-                    self.pg_P.removeItem(self.curve_piezo_list[index])
-                except Exception:
-                    pass
-                del self.curve_piezo_list[index]
-            if index < len(self.curve_corr_list):
-                try:
-                    self.pg_dPdt.removeItem(self.curve_corr_list[index])
-                except Exception:
-                    pass
-                del self.curve_corr_list[index]
-            for lst in [self.cap, self.t_cam, self.correlations, self.index_cam, self.time, self.spectre_number]:
-                if index < len(lst):
-                    del lst[index]
-            if index < len(self.variables.liste_objets):
-                del self.variables.liste_objets[index]
+        run_id = None
+        if item is not None:
+            run_id = item.data(Qt.UserRole)
+        if run_id is None:
+            run_id = self.current_run_id
+
+        state = self.runs.pop(run_id, None)
+        if state is None:
+            return
+
+        # Nettoyage des courbes stockées dans l'état
+        for curve in state.curves_T:
+            try:
+                self.pg_dPdt.removeItem(curve)
+            except Exception:
+                pass
+        for curve in state.curves_P:
+            try:
+                self.pg_P.removeItem(curve)
+            except Exception:
+                pass
+        for curve in state.curves_dPdt:
+            try:
+                self.pg_dPdt.removeItem(curve)
+            except Exception:
+                pass
+        for curve in state.curves_sigma:
+            try:
+                self.pg_sigma.removeItem(curve)
+            except Exception:
+                pass
+        for curve in state.curves_dlambda:
+            try:
+                self.pg_dlambda.removeItem(curve)
+            except Exception:
+                pass
+        if state.piezo_curve is not None:
+            try:
+                self.pg_P.removeItem(state.piezo_curve)
+            except Exception:
+                pass
+        if state.corr_curve is not None:
+            try:
+                self.pg_dPdt.removeItem(state.corr_curve)
+            except Exception:
+                pass
+
+        if state.list_item is not None:
+            index = self.liste_objets_widget.row(state.list_item)
             self.liste_objets_widget.takeItem(index)
-            self.c_m.insert(0,self.color[index])
-            del self.color[index]
-            self.index_select-=1
-            if self.index_select>=0:
-                self.SELECT_CEDd(item=self.liste_objets_widget.item(int(self.index_select)))
+
+        if run_id == self.current_run_id:
+            self.current_run_id = None
+            self.RUN = None
+
+        # Restitue la couleur disponible
+        self.c_m.insert(0, state.color)
+        if state.color in self.color:
+            self.color.remove(state.color)
+
+        # Nettoie les mappings fichier -> run_id
+        keys_to_delete = [k for k, v in self.file_index_map.items() if v == run_id]
+        for k in keys_to_delete:
+            del self.file_index_map[k]
+
+        # Supprime le CEDd legacy si présent
+        self.variables.liste_objets = [ced for ced in self.variables.liste_objets if self._get_run_id(ced) != run_id]
+
+        # Sélectionne un autre run si disponible
+        if self.liste_objets_widget.count() > 0:
+            next_item = self.liste_objets_widget.item(0)
+            self.SELECT_CEDd(item=next_item)
     def Dell_Jauge(self):# - - - DELL JAUGE- - -#
         if self.index_jauge == -1:
             return print("jauge not select")
