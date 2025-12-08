@@ -448,6 +448,54 @@ class MainWindow(QMainWindow):
         self.spinbox_spec_index.blockSignals(False)
 
         self.index_spec = 0
+
+    # ==================================================================
+    # ===============   OUTILS D'OBJETS PYQTGRAPH   ====================
+    # ==================================================================
+    def _ensure_curve_at(self, curve_list, index, plot_widget, **plot_kwargs):
+        """Garantit la présence d'une courbe à l'index donné et la retourne."""
+
+        while len(curve_list) <= index:
+            curve_list.append(None)
+
+        curve = curve_list[index]
+        if curve is None:
+            curve = plot_widget.plot(**plot_kwargs)
+            curve_list[index] = curve
+        return curve
+
+    def _get_or_create_curve(self, curve, plot_widget, **plot_kwargs):
+        """Retourne la courbe existante ou en crée une nouvelle sur le plot fourni."""
+
+        if curve is None:
+            curve = plot_widget.plot(**plot_kwargs)
+        return curve
+
+    def _collect_curve_arrays(self, curves):
+        """Récupère les tableaux Y valides des courbes PyQtGraph fournies."""
+
+        arrays = []
+        for c in curves:
+            if c is None:
+                continue
+            _, y = c.getData()
+            if y is not None and len(y) > 0:
+                arrays.append(np.asarray(y, dtype=float))
+        return arrays
+
+    def _apply_viewbox_limits(self, viewbox, x_data, curves, extra_curves=None):
+        """Applique des limites à partir des courbes fournies sur une ViewBox."""
+
+        y_arrays = self._collect_curve_arrays(curves)
+
+        if extra_curves:
+            if not isinstance(extra_curves, (list, tuple)):
+                extra_curves = [extra_curves]
+            y_arrays.extend(self._collect_curve_arrays(extra_curves))
+
+        if y_arrays:
+            y_concat = np.concatenate(y_arrays)
+            self._set_viewbox_limits_from_data(viewbox, x_data, y_concat, padding=0.02)
         self.bit_bypass = True
         self.LOAD_Spectrum()
         self.bit_bypass = False
@@ -1881,69 +1929,17 @@ class MainWindow(QMainWindow):
 
         x_time = np.asarray(Time, dtype=float)
 
-        # ========= P =========
-        y_list_P = []
+        vb_P = self.pg_P.getViewBox()
+        self._apply_viewbox_limits(vb_P, x_time, state.curves_P, getattr(state, "piezo_curve", None))
 
-        # Courbes P (par jauge)
-        for c in state.curves_P:
-            x, y = c.getData()
-            if y is not None and len(y) > 0:
-                y_list_P.append(np.asarray(y, dtype=float))
+        vb_dPdt = self.pg_dPdt.getViewBox()
+        self._apply_viewbox_limits(vb_dPdt, x_time, state.curves_dPdt + state.curves_T)
 
-        # Courbe piézo éventuelle
-        piezo_curve = getattr(state, "piezo_curve", None)
-        if piezo_curve is not None:
-            x, y = piezo_curve.getData()
-            if y is not None and len(y) > 0:
-                y_list_P.append(np.asarray(y, dtype=float))
+        vb_sigma = self.pg_sigma.getViewBox()
+        self._apply_viewbox_limits(vb_sigma, x_time, state.curves_sigma)
 
-        if y_list_P:
-            y_P = np.concatenate(y_list_P)
-            vb_P = self.pg_P.getViewBox()
-            self._set_viewbox_limits_from_data(vb_P, x_time, y_P, padding=0.02)
-
-        # ========= dP/dt (+ T) =========
-        y_list_dPdt = []
-
-        for c in state.curves_dPdt:
-            x, y = c.getData()
-            if y is not None and len(y) > 0:
-                y_list_dPdt.append(np.asarray(y, dtype=float))
-
-        for c in state.curves_T:
-            x, y = c.getData()
-            if y is not None and len(y) > 0:
-                y_list_dPdt.append(np.asarray(y, dtype=float))
-
-        if y_list_dPdt:
-            y_dPdt = np.concatenate(y_list_dPdt)
-            vb_dPdt = self.pg_dPdt.getViewBox()
-            self._set_viewbox_limits_from_data(vb_dPdt, x_time, y_dPdt, padding=0.02)
-
-        # ========= sigma =========
-        y_list_sigma = []
-        for c in state.curves_sigma:
-            x, y = c.getData()
-            if y is not None and len(y) > 0:
-                y_list_sigma.append(np.asarray(y, dtype=float))
-
-        if y_list_sigma:
-            y_sigma = np.concatenate(y_list_sigma)
-            vb_sigma = self.pg_sigma.getViewBox()
-            self._set_viewbox_limits_from_data(vb_sigma, x_time, y_sigma, padding=0.02)
-
-        # ========= Δλ =========
-        # Tu mets déjà Time en X pour dlambda -> on repart sur Time
-        y_list_dlambda = []
-        for c in state.curves_dlambda:
-            x, y = c.getData()
-            if y is not None and len(y) > 0:
-                y_list_dlambda.append(np.asarray(y, dtype=float))
-
-        if y_list_dlambda:
-            y_dlambda = np.concatenate(y_list_dlambda)
-            vb_dlambda = self.pg_dlambda.getViewBox()
-            self._set_viewbox_limits_from_data(vb_dlambda, x_time, y_dlambda, padding=0.02)
+        vb_dlambda = self.pg_dlambda.getViewBox()
+        self._apply_viewbox_limits(vb_dlambda, x_time, state.curves_dlambda)
 
     def execute_code(self, code=None):
         if code is None:
@@ -2414,48 +2410,53 @@ class MainWindow(QMainWindow):
                 dps = []
                 time_dps = []
 
-            if i >= len(state.curves_P):
-                state.curves_P.append(
-                    self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-                )
-            else:
-                state.curves_P[i].setData(Time, l_P[i])
+            curve_kwargs = dict(
+                pen=pg.mkPen(G.color_print[0], width=1),
+                symbol='d',
+                symbolPen=None,
+                symbolBrush=G.color_print[0],
+                symbolSize=4,
+            )
 
-            if i >= len(state.curves_dPdt):
-                state.curves_dPdt.append(
-                    self.pg_dPdt.plot(time_dps, dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-                )
-            else:
-                state.curves_dPdt[i].setData(time_dps, dps)
+            curve_P = self._ensure_curve_at(state.curves_P, i, self.pg_P, **curve_kwargs)
+            curve_P.setData(Time, l_P[i])
 
-            if i >= len(state.curves_sigma):
-                state.curves_sigma.append(
-                    self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-                )
-            else:
-                state.curves_sigma[i].setData(Time, l_fwhm[i])
+            curve_dPdt = self._ensure_curve_at(state.curves_dPdt, i, self.pg_dPdt, **curve_kwargs)
+            curve_dPdt.setData(time_dps, dps)
+
+            curve_sigma = self._ensure_curve_at(state.curves_sigma, i, self.pg_sigma, **curve_kwargs)
+            curve_sigma.setData(Time, l_fwhm[i])
 
         has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
         if has_T:
-            curve_T = state.curves_T[0] if state.curves_T else self.pg_dPdt.plot([], [], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
-            if not state.curves_T:
-                state.curves_T.append(curve_T)
+            curve_T = self._ensure_curve_at(
+                state.curves_T,
+                0,
+                self.pg_dPdt,
+                pen=pg.mkPen('darkred'),
+                symbol='t',
+                symbolBrush='darkred',
+                symbolSize=6,
+            )
             curve_T.setData(Time, l_T[-1] if l_T else [])
         elif state.curves_T:
             state.curves_T[0].setData([], [])
 
-        while len(state.curves_dlambda) < len(l_spe):
-            state.curves_dlambda.append(
-                self.pg_dlambda.plot([], [], pen=None, symbol='+', symbolPen=pg.mkPen(state.color))
-            )
         for i, spe in enumerate(l_spe):
-            state.curves_dlambda[i].setData(Time, spe)
+            curve = self._ensure_curve_at(
+                state.curves_dlambda,
+                i,
+                self.pg_dlambda,
+                pen=None,
+                symbol='+',
+                symbolPen=pg.mkPen(state.color),
+            )
+            curve.setData(Time, spe)
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
             state.curves_dlambda[extra_index].setData([], [])
 
         if self.RUN.data_Oscillo is not None:
-            if state.piezo_curve is None:
-                state.piezo_curve = self.pg_P.plot([], [], pen=pg.mkPen(state.color))
+            state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(state.color))
             state.piezo_curve.setData(time_amp, amp)
         elif state.piezo_curve is not None:
             state.piezo_curve.setData([], [])
