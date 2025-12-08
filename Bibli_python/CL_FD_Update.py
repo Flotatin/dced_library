@@ -1,41 +1,46 @@
-import sys
-import tkinter as tk
-
-from tkinter import filedialog
-from matplotlib.widgets import Slider, Button
-from PyQt5.QtWidgets import  QLabel, QPushButton, QDoubleSpinBox, QProgressBar,QVBoxLayout,QHBoxLayout,  QCheckBox,  QDoubleSpinBox  ,QDialog
-from PyQt5.QtCore import Qt,  QTimer
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-
-import os
-import matplotlib.pyplot as plt
-from lmfit.models import PseudoVoigtModel , MoffatModel , SplitLorentzianModel , Pearson4Model, GaussianModel
-from scipy.signal import savgol_filter ,filtfilt , iirfilter  #, find_peaks, peak_widths , lfilter ,
-import peakutils as pk
-import pandas as pd
-import numpy as np
-from PIL import Image
-import dill
-from tqdm import tqdm
-from math import sqrt , log
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import lecroyscope
 import copy
+import os
 import re
-from scipy.optimize import minimize ,curve_fit
-from scipy.special import gamma , beta
-from pynverse import inversefunc
-import random
+import sys
+import time
+import tkinter as tk
+from math import log, sqrt
+from tkinter import filedialog
 
-import time 
 import cv2
-
-from scipy.signal import find_peaks
-import warnings
-
-from deap import base, creator, tools, algorithms
-from scipy.spatial.distance import cdist
+import dill
+import lecroyscope
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import peakutils as pk
+from PIL import Image
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+)
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.widgets import Button, Slider
+from lmfit.models import (
+    GaussianModel,
+    MoffatModel,
+    Pearson4Model,
+    PseudoVoigtModel,
+    SplitLorentzianModel,
+)
+from pynverse import inversefunc
+from scipy.signal import savgol_filter
+from scipy.special import beta, gamma
+from tqdm import tqdm
 
 
 #from scipy.optimize import minimize

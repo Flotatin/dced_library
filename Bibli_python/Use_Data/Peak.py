@@ -1,8 +1,13 @@
 import numpy as np
 from lmfit.models import (
-    PseudoVoigtModel, MoffatModel, SplitLorentzianModel,
-    Pearson4Model, GaussianModel
+    GaussianModel,
+    MoffatModel,
+    Pearson4Model,
+    PseudoVoigtModel,
+    SplitLorentzianModel,
 )
+
+from Bibli_python.Data.Data_Peak import data_Peak
 
 
 class Peak:

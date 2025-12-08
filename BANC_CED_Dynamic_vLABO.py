@@ -1,55 +1,53 @@
 # BANC CED Dynamic 
 
+import copy
+import io
 import os
 import sys
-import dill
-import traceback
-import numpy as np
-
-import pyqtgraph as pg
-from PyQt5.QtWidgets import (QApplication,
-                             QMainWindow,
-                             QLabel,
-                             QPushButton,
-                             QFileDialog,
-                             QGridLayout,
-                             QWidget,
-                             QTableWidget,
-                             QComboBox,
-                             QVBoxLayout,
-                             QHBoxLayout,
-                             QTableWidgetItem,
-                             QDoubleSpinBox,
-                             QGroupBox,
-                             QTableView,
-                             QStyledItemDelegate,
-                             QLineEdit,
-                             QMessageBox,
-                             QCheckBox,
-                             QListWidget,
-                             QTextEdit,
-                             QListWidgetItem,
-                             QSpinBox,
-                             QTabWidget,
-                             QSlider
-                             )
-
-from PyQt5.QtCore import QAbstractTableModel, Qt, QModelIndex,QTimer
-from PyQt5.QtGui import QColor, QFont
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from datetime import datetime
-
-import copy
-from dataclasses import dataclass, field
-from typing import Optional
-from scipy.optimize import curve_fit
-import cv2
-import io
-from math import isnan
-import pandas as pd
-import matplotlib.colors as mcolors
-from pynverse import inversefunc
 import time
+import traceback
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+
+import cv2
+import matplotlib.colors as mcolors
+import numpy as np
+import pandas as pd
+import pyqtgraph as pg
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from pynverse import inversefunc
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QStyledItemDelegate,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+from scipy.optimize import curve_fit
 style = """
        /* Appliquer la police scientifique */
 * {
