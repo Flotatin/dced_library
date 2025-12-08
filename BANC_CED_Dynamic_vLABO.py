@@ -621,11 +621,18 @@ class MainWindow(QMainWindow):
         ParamBox = QGroupBox("Tools")
         ParamBoxLayout = QVBoxLayout()
 
-        self.tools_tabs = QTabWidget()
-        self.tools_tabs.setTabPosition(QTabWidget.North)
+        # ---- Bouton pour le kernel Python ----
+        self.python_kernel_button = QPushButton("Show Python Kernel")
+        self.python_kernel_button.setCheckable(True)
+        self.python_kernel_button.setChecked(False)
+        self.python_kernel_button.toggled.connect(self.toggle_python_kernel)
+        ParamBoxLayout.addWidget(self.python_kernel_button)
 
-        self._setup_tab_baseline()
-        self._setup_tab_filtre()
+        # ---- Tabs ----
+        self.tools_tabs = QTabWidget()
+        self.tools_tabs.setTabPosition(QTabWidget.West)
+
+        self._setup_tab_data_treatment()   # <<<< Nouveau au lieu de baseline+filtre
         self._setup_tab_gauge()
         self._setup_tab_fit()
         self._setup_tab_fit_selection()
@@ -633,29 +640,37 @@ class MainWindow(QMainWindow):
         ParamBoxLayout.addWidget(self.tools_tabs)
         ParamBox.setLayout(ParamBoxLayout)
         self.grid_layout.addWidget(ParamBox, 0, 1, 1, 1)
+    
+    def _setup_tab_data_treatment(self):
+        self.tab_data = QWidget()
+        layout = QVBoxLayout(self.tab_data)
 
-    def _setup_tab_baseline(self):
-        self.tab_baseline = QWidget()
-        layout = QVBoxLayout(self.tab_baseline)
+        title = QLabel("Data treatment section - - -")
+        layout.addWidget(title)
 
-        name = QLabel("baseline section - - -")
-        layout.addWidget(name)
+        # ===== Sous-section Baseline =====
+        baseline_group = QGroupBox("Baseline")
+        bl_layout = QVBoxLayout()
+
+        name_bl = QLabel("baseline section - - -")
+        bl_layout.addWidget(name_bl)
 
         self.deg_baseline_entry = QSpinBox()
         self.deg_baseline_entry.valueChanged.connect(self.setFocus)
         self.deg_baseline_entry.setRange(0, 10)
         self.deg_baseline_entry.setSingleStep(1)
         self.deg_baseline_entry.setValue(0)
-        layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
+        bl_layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
 
-        self.tools_tabs.addTab(self.tab_baseline, "Baseline")
+        baseline_group.setLayout(bl_layout)
+        layout.addWidget(baseline_group)
 
-    def _setup_tab_filtre(self):
-        self.tab_filtre = QWidget()
-        layout = QVBoxLayout(self.tab_filtre)
+        # ===== Sous-section Filtre =====
+        filtre_group = QGroupBox("Filtre")
+        f_layout = QVBoxLayout()
 
-        name = QLabel("filtre data section - - -")
-        layout.addWidget(name)
+        name_f = QLabel("filtre data section - - -")
+        f_layout.addWidget(name_f)
 
         self.filtre_type_selector = QComboBox(self)
         liste_type_filtre = ['svg', 'fft', 'No filtre']
@@ -664,8 +679,7 @@ class MainWindow(QMainWindow):
         for ind, col in enumerate(filtre_colors):
             self.filtre_type_selector.model().item(ind).setBackground(QColor(col))
         self.filtre_type_selector.currentIndexChanged.connect(self.f_filtre_select)
-
-        layout.addLayout(creat_spin_label(self.filtre_type_selector, "Filtre:"))
+        f_layout.addLayout(creat_spin_label(self.filtre_type_selector, "Filtre:"))
 
         layh1 = QHBoxLayout()
         self.param_filtre_1_name = QLabel("")
@@ -673,7 +687,7 @@ class MainWindow(QMainWindow):
         self.param_filtre_1_entry = QLineEdit()
         self.param_filtre_1_entry.setText("10")
         layh1.addWidget(self.param_filtre_1_entry)
-        layout.addLayout(layh1)
+        f_layout.addLayout(layh1)
 
         layh2 = QHBoxLayout()
         self.param_filtre_2_name = QLabel("")
@@ -681,11 +695,16 @@ class MainWindow(QMainWindow):
         self.param_filtre_2_entry = QLineEdit()
         self.param_filtre_2_entry.setText("1")
         layh2.addWidget(self.param_filtre_2_entry)
-        layout.addLayout(layh2)
+        f_layout.addLayout(layh2)
 
         self.f_filtre_select()
 
-        self.tools_tabs.addTab(self.tab_filtre, "Filtre")
+        filtre_group.setLayout(f_layout)
+        layout.addWidget(filtre_group)
+
+        layout.addStretch()
+
+        self.tools_tabs.addTab(self.tab_data, "Data\nTreatment")
 
     def _setup_tab_gauge(self):
         self.tab_gauge = QWidget()
@@ -824,7 +843,7 @@ class MainWindow(QMainWindow):
     # ==================================================================
     
     def _setup_spectrum_box(self):
-        SpectraBox = QGroupBox("Spectrum")
+        self.SpectraBox = QGroupBox("Spectrum")
         SpectraBoxFirstLayout = QVBoxLayout()
 
         # ================== WIDGET PyQtGraph ==================
@@ -886,7 +905,8 @@ class MainWindow(QMainWindow):
         self.curve_fft = self.pg_fft.plot(pen='m')
 
         # Zoom : data + pic sélectionné
-        self.curve_zoom_data = self.pg_zoom.plot(pen='w')
+        self.curve_zoom_data = self.pg_zoom.plot(pen='k')
+        self.curve_zoom_data_brut = self.pg_zoom.plot(pen='w')
         self.curve_zoom_pic = self.pg_zoom.plot(
             pen=None, fillLevel=0, brush=(255, 0, 0, 80)
         )
@@ -897,7 +917,7 @@ class MainWindow(QMainWindow):
         self.pg_spectrum.addItem(self.vline)
         self.pg_spectrum.addItem(self.hline)
 
-        self.cross_zoom = pg.ScatterPlotItem(pen=None, brush='r', size=10)
+        self.cross_zoom = pg.ScatterPlotItem(symbol="+",pen=None, brush='r', size=10)
         self.pg_zoom.addItem(self.cross_zoom)
 
         # ================== ÉTAT LOGIQUE ==================
@@ -959,8 +979,8 @@ class MainWindow(QMainWindow):
         layout_check.addWidget(self.vslmfit)
 
         SpectraBoxFirstLayout.addLayout(layout_check)
-        SpectraBox.setLayout(SpectraBoxFirstLayout)
-        self.grid_layout.addWidget(SpectraBox, 0, 2, 1, 1)
+        self.SpectraBox.setLayout(SpectraBoxFirstLayout)
+        self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
 
         # ================== EVENTS PyQtGraph ==================
         # clic sur le spectre principal
@@ -968,12 +988,56 @@ class MainWindow(QMainWindow):
         self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
 
+         # ================== FACTEURS LIGNES / COLONNES ==================
+        # 3 lignes : (2, 2, 1)  -> les 2 premières 2x plus grandes que la 3ème
+        self._spec_row_factors = (2, 1, 1)
+        # 2 colonnes : par exemple 30% (col 0) / 70% (col 1)
+        self._spec_col_factors = (1, 2)
+
+        # premier ajustement immédiat
+        self._update_graphicslayout_sizes(
+            self.pg_spec,
+            row_factors=self._spec_row_factors,
+            col_factors=self._spec_col_factors,
+        )
+
     # ==================================================================
     # ===============   SECTION : dDAC FIGURE (0,3)  ===================
     # ==================================================================
     def _setup_ddac_box(self):
         group_graphique = QGroupBox("dDAC")
         layout_graphique = QVBoxLayout()
+
+        movie_layout = QHBoxLayout()
+        # Slider Qt pour index d'image
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)  # sera mis à jour après chargement
+        self.slider.setSingleStep(1)
+        self.slider.valueChanged.connect(self._on_slider_movie_changed)
+        movie_layout.addWidget(self.slider)     
+
+        # Boutons précédent / play / suivant
+        self.previous_button = QPushButton("⟵")
+        self.previous_button.clicked.connect(self.previous_image)
+        movie_layout.addWidget(self.previous_button)
+
+        self.play_stop_button = QPushButton("play/stop")
+        self.play_stop_button.clicked.connect(self.f_play_stop_movie)
+        movie_layout.addWidget(self.play_stop_button)
+
+        self.next_button = QPushButton("⟶")
+        self.next_button.clicked.connect(self.next_image)
+        movie_layout.addWidget(self.next_button)
+
+        layout_graphique.addLayout(movie_layout)
+        # FPS
+        
+        self.fps_play_spinbox = QSpinBox()
+        self.fps_play_spinbox.setRange(1, 1000)
+        self.fps_play_spinbox.setValue(100)
+        movie_layout.addWidget(QLabel("fps:"))
+        movie_layout.addWidget(self.fps_play_spinbox)
 
         # ================== WIDGET PyQtGraph ==================
         self.pg_ddac = pg.GraphicsLayoutWidget()
@@ -1005,7 +1069,7 @@ class MainWindow(QMainWindow):
 
         self.pg_text = self.pg_ddac.addViewBox(row=1, col=1)
         self.pg_text.setAspectLocked(False)
-        self.pg_text_label = pg.TextItem(color='w')
+        self.pg_text_label = pg.TextItem(color='w',)
         self.pg_text.addItem(self.pg_text_label)
 
         self.pg_dlambda = self.pg_ddac.addPlot(row=2, col=1)
@@ -1026,6 +1090,8 @@ class MainWindow(QMainWindow):
         self.line_t_P = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
         self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
         self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
+        linep0=pg.InfiniteLine(0,angle=0, movable=False, pen=pg.mkPen('k', width=2))
+        self.pg_P.addItem(linep0)
         self.pg_P.addItem(self.line_t_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
@@ -1041,6 +1107,47 @@ class MainWindow(QMainWindow):
         ]
         for line in self.zone_movie_lines:
             self.pg_P.addItem(line)
+
+
+                # ================== MARQUEURS DE CLIC (SCATTER CROIX) ==================
+        # Un scatter par graphe pour montrer la position exacte du clic
+
+        self.scatter_P = pg.ScatterPlotItem(
+            x=[], y=[],
+            pen=pg.mkPen('w', width=2),
+            brush=None,          # pas de remplissage
+            size=10,
+            symbol='+'           # croix
+        )
+        self.pg_P.addItem(self.scatter_P)
+
+        self.scatter_dPdt = pg.ScatterPlotItem(
+            x=[], y=[],
+            pen=pg.mkPen('w', width=2),
+            brush=None,
+            size=10,
+            symbol='+'
+        )
+        self.pg_dPdt.addItem(self.scatter_dPdt)
+
+        self.scatter_sigma = pg.ScatterPlotItem(
+            x=[], y=[],
+            pen=pg.mkPen('w', width=2),
+            brush=None,
+            size=10,
+            symbol='+'
+        )
+        self.pg_sigma.addItem(self.scatter_sigma)
+
+        self.scatter_dlambda = pg.ScatterPlotItem(
+            x=[], y=[],
+            pen=pg.mkPen('w', width=2),
+            brush=None,
+            size=10,
+            symbol='+'
+        )
+        self.pg_dlambda.addItem(self.scatter_dlambda)
+
 
         # ================== ÉTAT DYNAMIQUE (film) ==================
         self.current_index = 0
@@ -1071,37 +1178,10 @@ class MainWindow(QMainWindow):
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
-        # Slider Qt pour index d'image
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(0)  # sera mis à jour après chargement
-        self.slider.setSingleStep(1)
-        self.slider.valueChanged.connect(self._on_slider_movie_changed)
-        controls_layout.addWidget(self.slider)
-
-        # FPS
-        self.fps_play_spinbox = QSpinBox()
-        self.fps_play_spinbox.setRange(1, 1000)
-        self.fps_play_spinbox.setValue(100)
-        controls_layout.addWidget(QLabel("fps:"))
-        controls_layout.addWidget(self.fps_play_spinbox)
-
-        # Boutons précédent / play / suivant
-        self.previous_button = QPushButton("⟵")
-        self.previous_button.clicked.connect(self.previous_image)
-        controls_layout.addWidget(self.previous_button)
-
-        self.play_stop_button = QPushButton("play/stop")
-        self.play_stop_button.clicked.connect(self.f_play_stop_movie)
-        controls_layout.addWidget(self.play_stop_button)
-
-        self.next_button = QPushButton("⟶")
-        self.next_button.clicked.connect(self.next_image)
-        controls_layout.addWidget(self.next_button)
-
         layout_graphique.addLayout(controls_layout)
 
         group_graphique.setLayout(layout_graphique)
+
         self.grid_layout.addWidget(group_graphique, 0, 3, 3, 1)
 
         # Timer Qt pour le mode "lecture"
@@ -1115,8 +1195,17 @@ class MainWindow(QMainWindow):
 
         self._spectrum_limits_initialized = False
         self._zoom_limits_initialized = False
+        
+        # ================== FACTEURS DE LIGNES (2, 2, 1) ==================
+        self._ddac_row_factors = (3, 1, 1)
+        # exemple : colonne temps / colonne image de même largeur
+        self._ddac_col_factors = (1, 1)
 
-
+        self._update_graphicslayout_sizes(
+            self.pg_ddac,
+            row_factors=self._ddac_row_factors,
+            col_factors=self._ddac_col_factors,
+        )
     # ==================================================================
     # ===============   SECTION : TOOLS CHECKS (3,2)  ==================
     # ==================================================================
@@ -1206,7 +1295,7 @@ class MainWindow(QMainWindow):
     # ===============   SECTION : PYTHON KERNEL (2,2)  =================
     # ==================================================================
     def _setup_python_kernel(self):
-        promptBox = QGroupBox("Pyhton Kernel")
+        self.promptBox = QGroupBox("Python Kernel")
         promptLayout = QVBoxLayout()
 
         self.text_edit = QTextEdit(self)
@@ -1224,14 +1313,56 @@ class MainWindow(QMainWindow):
         self.output_display.setPlaceholderText("Output print...")
         promptLayout.addWidget(self.output_display)
 
-        promptBox.setLayout(promptLayout)
-        self.grid_layout.addWidget(promptBox, 2, 2, 1, 1)
+        self.promptBox.setLayout(promptLayout)
+
+        # On l'ajoute à la grille mais on pourra le déplacer/reconfigurer
+        self.grid_layout.addWidget(self.promptBox, 2, 2, 1, 1)
+        self.promptBox.hide()  # caché au démarrage
+
+
+
+    def toggle_python_kernel(self, checked: bool):
+        """
+        Affiche/cache le kernel Python et réarrange la grille :
+        - si caché :
+            SpectraBox: (0,2, 2,1)
+            AddBox    : (2,2, 1,1)
+        - si affiché :
+        SpectraBox: (0,2, 1,1)
+        AddBox    : (1,2, 1,1)
+        promptBox : (2,2, 1,1)
+        """
+        if checked:
+            # bouton enfoncé -> on montre le kernel
+            self.python_kernel_button.setText("Hide Python Kernel")
+            self.promptBox.show()
+
+            # retirer puis replacer pour être sûr
+            self.grid_layout.removeWidget(self.SpectraBox)
+            self.grid_layout.removeWidget(self.AddBox)
+            self.grid_layout.removeWidget(self.promptBox)
+
+            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 1, 1)
+            self.grid_layout.addWidget(self.AddBox,     1, 2, 1, 1)
+            self.grid_layout.addWidget(self.promptBox,  2, 2, 1, 1)
+
+        else:
+            # bouton relâché -> on cache le kernel
+            self.python_kernel_button.setText("Show Python Kernel")
+            self.promptBox.hide()
+
+            self.grid_layout.removeWidget(self.SpectraBox)
+            self.grid_layout.removeWidget(self.AddBox)
+            # promptBox peut rester dans la grille mais caché
+
+            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
+            self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
 
     # ==================================================================
     # ===============   SECTION : GAUGE INFO (1,2)  ====================
     # ==================================================================
     def _setup_gauge_info(self):
-        AddBox = QGroupBox("Gauge information")
+        self.AddBox = QGroupBox("Gauge information")
         AddLayout = QVBoxLayout()
 
         layh4 = QHBoxLayout()
@@ -1273,8 +1404,8 @@ class MainWindow(QMainWindow):
         self.listbox_pic.doubleClicked.connect(self.select_pic)
         AddLayout.addWidget(self.listbox_pic)
 
-        AddBox.setLayout(AddLayout)
-        self.grid_layout.addWidget(AddBox, 1, 2, 1, 1)
+        self.AddBox.setLayout(AddLayout)
+        self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
         self.bit_modif_PTlambda = False
 
     # ==================================================================
@@ -1289,6 +1420,62 @@ class MainWindow(QMainWindow):
         self.ADD_gauge()
         self.FIT_lmfitVScurvfit()
         self.CREAT_new_CEDd()
+
+
+    def _update_graphicslayout_sizes(self, glw, row_factors=None, col_factors=None):
+        """
+        Ajuste dynamiquement hauteurs de lignes et largeurs de colonnes
+        d'un GraphicsLayoutWidget en fonction de facteurs.
+        - row_factors : tuple/list, ex (2, 2, 1) pour 3 lignes
+        - col_factors : tuple/list, ex (3, 7) pour 2 colonnes (30% / 70%)
+        """
+        layout = glw.ci.layout
+
+        # ----- LIGNES -----
+        if row_factors is not None:
+            total_rf = float(sum(row_factors))
+            h = glw.height()
+            if h <= 0:
+                h = glw.sizeHint().height()
+
+            for i, f in enumerate(row_factors):
+                row_h = int(h * (f / total_rf))
+                layout.setRowPreferredHeight(i, row_h)
+                layout.setRowMinimumHeight(i, 0)
+                # pas de Maximum pour laisser Qt respirer
+
+        # ----- COLONNES -----
+        if col_factors is not None:
+            total_cf = float(sum(col_factors))
+            w = glw.width()
+            if w <= 0:
+                w = glw.sizeHint().width()
+
+            for j, f in enumerate(col_factors):
+                col_w = int(w * (f / total_cf))
+                layout.setColumnPreferredWidth(j, col_w)
+                layout.setColumnMinimumWidth(j, 0)
+                # là aussi, pas de Maximum
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+        # Spectrum box
+        if hasattr(self, "pg_spec"):
+            self._update_graphicslayout_sizes(
+                self.pg_spec,
+                row_factors=getattr(self, "_spec_row_factors", None),
+                col_factors=getattr(self, "_spec_col_factors", None),
+            )
+
+        # dDAC box
+        if hasattr(self, "pg_ddac"):
+            self._update_graphicslayout_sizes(
+                self.pg_ddac,
+                row_factors=getattr(self, "_ddac_row_factors", None),
+                col_factors=getattr(self, "_ddac_col_factors", None),
+            )
+
 
 #? CALVIER COMMANDE CONTROLE
 
@@ -1497,7 +1684,7 @@ class MainWindow(QMainWindow):
 
     def _select_nearest_pic_from_x(self, x):
         if self.Spectrum is None or self.Param0 is None:
-            return
+            return 
 
         centers = []
         indices = []
@@ -1545,7 +1732,7 @@ class MainWindow(QMainWindow):
             self.select_pic()
         finally:
             self.bit_bypass = False
-
+        
     def _refresh_spectrum_view(self):
         """Met à jour *tous* les plots PyQtGraph à partir de self.Spectrum & co."""
         S = self.Spectrum
@@ -1558,15 +1745,23 @@ class MainWindow(QMainWindow):
             self.curve_baseline_blfit.setData([], [])
             self.curve_fft.setData([], [])
             self.curve_zoom_data.setData([], [])
+            self.curve_zoom_data_brut.setData([], [])
             self.curve_zoom_pic.setData([], [])
             self.curve_spec_pic_select.setData([], [])
             return
+
+        # --- On mémorise les X/Y du spectre principal pour les autres graphes ---
+        x_spec = None
+        y_spec = None
 
         # 1) Spectre corrigé
         if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
             x = np.asarray(S.x_corr)
             y = np.asarray(S.y_corr)
             self.curve_spec_data.setData(x, y)
+
+            x_spec = x
+            y_spec = y
 
             vb_spec = self.pg_spectrum.getViewBox()
 
@@ -1582,23 +1777,33 @@ class MainWindow(QMainWindow):
                 self._spectrum_limits_initialized = True
         else:
             self.curve_spec_data.setData([], [])
+            # si pas de x_corr, on peut prendre wnb comme X de référence
+            if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "spec") and S.spec is not None:
+                x_spec = np.asarray(S.wnb)
+                y_spec = np.asarray(S.spec)
 
         # 2) Fit total (self.y_fit_start)
-        if self.y_fit_start is not None:
-            # self.y_fit_start est sur S.wnb
+        if self.y_fit_start is not None and hasattr(S, "wnb"):
             self.curve_spec_fit.setData(S.wnb, self.y_fit_start)
         else:
             self.curve_spec_fit.setData([], [])
+        
+        # 2 bis) Mise à jour du fond avec *tous* les pics
+        self._update_gauge_peaks_background()
 
-        # 3) dY
-        if hasattr(S, "dY") and S.dY is not None and hasattr(S, "X") and S.X is not None:
-            self.curve_dy.setData(S.X, S.dY)
+        # 3) dY : X = ceux du spectre, Y = dY
+        if hasattr(S, "dY") and S.dY is not None:
+            self.curve_dy.setData(S.X if hasattr(S, "X") and S.X is not None else S.wnb, S.dY)
         else:
             self.curve_dy.setData([], [])
 
         # 4) Baseline : brut + blfit
-        if hasattr(S, "wnb") and hasattr(S, "spec"):
+        if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
             self.curve_baseline_brut.setData(S.wnb, S.spec)
+
+            # limites du graphe brut : X et Y du brut
+            vb_base = self.pg_baseline.getViewBox()
+            self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
         else:
             self.curve_baseline_brut.setData([], [])
 
@@ -1609,6 +1814,119 @@ class MainWindow(QMainWindow):
                 self.curve_baseline_blfit.setData(S.wnb, S.blfit)
         else:
             self.curve_baseline_blfit.setData([], [])
+
+        # 5) FFT : même X que le spectre, mais limites Y = amplitude FFT
+        # (adapte les noms d'attributs FFT si besoin)
+        if hasattr(S, "fft_amp") and S.fft_amp is not None:
+            # Exemple : on trace FFT avec un axe fréquentiel S.fft_f
+            if hasattr(S, "fft_f") and S.fft_f is not None:
+                self.curve_fft.setData(S.fft_f, S.fft_amp)
+                x_fft = np.asarray(S.fft_f)
+            else:
+                # si tu n'as pas d'axe de fréquence propre, tu peux simplement utiliser le même X que le spectre
+                if x_spec is not None:
+                    x_fft = x_spec
+                    self.curve_fft.setData(x_fft, S.fft_amp)
+                else:
+                    x_fft = None
+        else:
+            self.curve_fft.setData([], [])
+            x_fft = None
+
+        # Limites du graphe FFT :
+        # - X : mêmes que le spectre (si x_spec dispo)
+        # - Y : amplitude FFT
+        if x_spec is not None and hasattr(S, "fft_amp") and S.fft_amp is not None:
+            vb_fft = self.pg_fft.getViewBox()
+            # On force les limites X avec x_spec, et Y avec fft_amp
+            # -> astuce : on donne x_data = x_spec, y_data = fft_amp
+            self._set_viewbox_limits_from_data(vb_fft, x_spec, S.fft_amp, padding=0.02)
+
+        # 6) Limites du graphe dY :
+        # X : mêmes que le spectre (x_spec)
+        # Y : dY
+        if x_spec is not None and hasattr(S, "dY") and S.dY is not None:
+            vb_dy = self.pg_dy.getViewBox()
+            # même astuce : x_data = x_spec, y_data = dY
+            self._set_viewbox_limits_from_data(vb_dy, x_spec, S.dY, padding=0.02)
+            self.pg_dy.setLimits(xMin=x_spec[0], xMax=x_spec[-1])
+
+    def _refresh_ddac_limits(self, state: RunViewState) -> None:
+        """
+        Fixe proprement les limites des 4 graphes dDAC :
+        - P, dP/dt(+T), sigma : X = Time, Y = données de chaque graphe
+        - Δλ : X = Time (ou l'axe des données), Y = Δλ
+        """
+        # ----- Axe temps commun -----
+        Time = getattr(state, "time", None)
+        if Time is None or len(Time) < 2:
+            return
+
+        x_time = np.asarray(Time, dtype=float)
+
+        # ========= P =========
+        y_list_P = []
+
+        # Courbes P (par jauge)
+        for c in state.curves_P:
+            x, y = c.getData()
+            if y is not None and len(y) > 0:
+                y_list_P.append(np.asarray(y, dtype=float))
+
+        # Courbe piézo éventuelle
+        piezo_curve = getattr(state, "piezo_curve", None)
+        if piezo_curve is not None:
+            x, y = piezo_curve.getData()
+            if y is not None and len(y) > 0:
+                y_list_P.append(np.asarray(y, dtype=float))
+
+        if y_list_P:
+            y_P = np.concatenate(y_list_P)
+            vb_P = self.pg_P.getViewBox()
+            self._set_viewbox_limits_from_data(vb_P, x_time, y_P, padding=0.02)
+
+        # ========= dP/dt (+ T) =========
+        y_list_dPdt = []
+
+        for c in state.curves_dPdt:
+            x, y = c.getData()
+            if y is not None and len(y) > 0:
+                y_list_dPdt.append(np.asarray(y, dtype=float))
+
+        for c in state.curves_T:
+            x, y = c.getData()
+            if y is not None and len(y) > 0:
+                y_list_dPdt.append(np.asarray(y, dtype=float))
+
+        if y_list_dPdt:
+            y_dPdt = np.concatenate(y_list_dPdt)
+            vb_dPdt = self.pg_dPdt.getViewBox()
+            self._set_viewbox_limits_from_data(vb_dPdt, x_time, y_dPdt, padding=0.02)
+
+        # ========= sigma =========
+        y_list_sigma = []
+        for c in state.curves_sigma:
+            x, y = c.getData()
+            if y is not None and len(y) > 0:
+                y_list_sigma.append(np.asarray(y, dtype=float))
+
+        if y_list_sigma:
+            y_sigma = np.concatenate(y_list_sigma)
+            vb_sigma = self.pg_sigma.getViewBox()
+            self._set_viewbox_limits_from_data(vb_sigma, x_time, y_sigma, padding=0.02)
+
+        # ========= Δλ =========
+        # Tu mets déjà Time en X pour dlambda -> on repart sur Time
+        y_list_dlambda = []
+        for c in state.curves_dlambda:
+            x, y = c.getData()
+            if y is not None and len(y) > 0:
+                y_list_dlambda.append(np.asarray(y, dtype=float))
+
+        if y_list_dlambda:
+            y_dlambda = np.concatenate(y_list_dlambda)
+            vb_dlambda = self.pg_dlambda.getViewBox()
+            self._set_viewbox_limits_from_data(vb_dlambda, x_time, y_dlambda, padding=0.02)
 
     def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
         """
@@ -1727,7 +2045,7 @@ class MainWindow(QMainWindow):
             ]
 
 #########################################################################################################################################################################################
-#? COMMANDE print1
+#? COMMANDE CEDD
     def f_text_CEDd_print(self, t):
         """Met à jour le texte d'information dDAC dans le TextItem PyQtGraph."""
         dp = None
@@ -1762,6 +2080,9 @@ class MainWindow(QMainWindow):
 
         if self.spectrum_select_box.isChecked() and int(spec_nb) != self.index_spec:
             self.index_spec = int(spec_nb)
+            self.spinbox_spec_index.blockSignals(True)
+            self.spinbox_spec_index.setValue(self.index_spec)
+            self.spinbox_spec_index.blockSignals(False)
             self.bit_bypass = True
             try:
                 self.LOAD_Spectrum()
@@ -1796,13 +2117,18 @@ class MainWindow(QMainWindow):
         x = mouse_point.x()
         y = mouse_point.y()
 
-        # Mise à jour des x1/x3/x5/x6 comme avant
+        # Mise à jour des x1/x3/x5/x6 + lignes + scatters
         if which == "P":
             self.x1, self.y1 = x, y
             self.x_clic, self.y_clic = x, y
             self.line_t_P.setPos(x)
             self.line_t_sigma.setPos(x)
             self.line_t_dPdt.setPos(x)
+
+            # scatter sur le graphe P
+            if hasattr(self, "scatter_P"):
+                self.scatter_P.setData([x], [y])
+
             # gestion du dP (start/end)
             if self.bit_dP == 0:
                 self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
@@ -1816,12 +2142,20 @@ class MainWindow(QMainWindow):
             self.line_t_sigma.setPos(x)
             self.line_t_dPdt.setPos(x)
 
+            # scatter sur le graphe dP/dt
+            if hasattr(self, "scatter_dPdt"):
+                self.scatter_dPdt.setData([x], [y])
+
         elif which == "sigma":
             self.x5, self.y5 = x, y
             self.x_clic, self.y_clic = x, y
             self.line_t_P.setPos(x)
             self.line_t_sigma.setPos(x)
             self.line_t_dPdt.setPos(x)
+
+            # scatter sur le graphe sigma
+            if hasattr(self, "scatter_sigma"):
+                self.scatter_sigma.setData([x], [y])
 
         elif which == "dlambda":
             self.x6, self.y6 = x, y
@@ -1831,15 +2165,19 @@ class MainWindow(QMainWindow):
             self.line_t_dPdt.setPos(x)
             self.line_nspec.setPos(x)
 
+            # scatter sur le graphe Δλ
+            if hasattr(self, "scatter_dlambda"):
+                self.scatter_dlambda.setData([x], [y])
+
         # Mise à jour frame film si la case est cochée
         state = self._get_state_for_run()
         if (
             self.movie_select_box.isChecked()
             and self.RUN is not None
             and state is not None
-            and self.RUN.Movie is not None
             and state.t_cam
         ):
+            
             t_array = np.array(state.t_cam)
             self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
             self.slider.blockSignals(True)
@@ -1849,6 +2187,91 @@ class MainWindow(QMainWindow):
 
         self.f_CEDd_update_print()
     
+
+    def _update_gauge_peaks_background(self):
+        """
+        Dessine en fond du spectre tous les pics de toutes les jauges,
+        depuis y = 0 (baseline supprimée).
+        """
+
+        # Supprimer anciens remplissages
+        if hasattr(self, "gauge_peak_items"):
+            for it in self.gauge_peak_items:
+                try:
+                    self.pg_spectrum.removeItem(it)
+                except Exception:
+                    pass
+        else:
+            self.gauge_peak_items = []
+
+        S = self.Spectrum
+        if S is None:
+            return
+
+        # X du spectre                                      
+        if not hasattr(S, "wnb") or S.wnb is None:
+            return
+        x = np.asarray(S.wnb, dtype=float)
+        if x.size == 0:
+            return
+
+        # Liste des contributions individuelles
+        if not self.list_y_fit_start or not S.Gauges:
+            return
+
+        new_items = []
+
+        # === Boucle sur les jauges ===
+        for j, G in enumerate(S.Gauges):
+
+            # couleurs des pics de cette jauge :
+            # G.color_print[1] contient typiquement une liste de couleurs pour les pics
+            colors_for_peaks = None
+            if hasattr(G, "color_print") and isinstance(G.color_print, (list, tuple)) and len(G.color_print) > 1:
+                colors_for_peaks = G.color_print[1]
+
+            # contributions individuelles y_pic
+            if j >= len(self.list_y_fit_start):
+                continue
+            list_peaks_j = self.list_y_fit_start[j]
+            if not list_peaks_j:
+                continue
+
+            # === Boucle sur les pics ===
+            for i, y_pic in enumerate(list_peaks_j):
+                if y_pic is None:
+                    continue
+
+                y_pic = np.asarray(y_pic, dtype=float)
+                if y_pic.size != x.size:
+                    continue
+
+                # Choix couleur
+                if colors_for_peaks and i < len(colors_for_peaks):
+                    col = colors_for_peaks[i]
+                    brush = pg.mkBrush(col)
+                    c = brush.color()
+                    c.setAlpha(80)
+                    brush = c
+                else:
+                    brush = (200, 200, 50, 60)  # jaune pâle par défaut
+
+                # === TRAÇAGE EN FOND ===
+                item = self.pg_spectrum.plot(
+                    x,
+                    y_pic,
+                    pen=None,
+                    fillLevel=0,      # <<<<<<<< baseline = 0 maintenant
+                    brush=brush,
+                )
+                item.setZValue(-5)  # Toujours derrière tout le reste
+                new_items.append(item)
+
+        self.gauge_peak_items = new_items
+
+
+#########################################################################################################################################################################################
+#? MOVIE 
     def _on_slider_movie_changed(self, idx: int):
         self.current_index = idx
         self._update_movie_frame()
@@ -1931,14 +2354,68 @@ class MainWindow(QMainWindow):
             self.playing_movie = False
             return
 
-        self.current_index += 1
-        if self.current_index >= nb:
-            self.current_index = 0
+        # Déterminer les bornes de lecture en fonction du cadrage / zone_movie
+        i_min, i_max = self._get_movie_bounds(state)
+        if i_max < i_min:  # cas dégénéré
+            self.timerMovie.stop()
+            self.playing_movie = False
+            return
 
+        # Si l'index courant est en dehors de la zone, on se remet sur le début de la zone
+        if self.current_index < i_min or self.current_index > i_max:
+            self.current_index = i_min
+        else:
+            # Avancer d'une image dans la zone
+            self.current_index += 1
+            if self.current_index > i_max:
+                # Boucle dans la zone définie
+                self.current_index = i_min
+
+        # Mise à jour du slider et de l'image
         self.slider.blockSignals(True)
         self.slider.setValue(self.current_index)
         self.slider.blockSignals(False)
         self._update_movie_frame()
+
+    def _get_movie_bounds(self, state):
+        """
+        Retourne (i_min, i_max) : indices de lecture pour le film.
+        - Si zone_movie n'est pas définie => toute la durée.
+        - Sinon => plus petit et plus grand indices dont t_cam est dans [t0, t1].
+        """
+        nb = len(state.index_cam)
+        if nb == 0:
+            return 0, -1  # cas degénéré
+
+        # Pas de zone définie : on lit tout
+        if self.zone_movie[0] is None or self.zone_movie[1] is None:
+            return 0, nb - 1
+
+        t0, t1 = self.zone_movie
+        if t0 > t1:
+            t0, t1 = t1, t0
+
+        t_cam = state.t_cam
+
+        # Trouver i_min : premier index avec t_cam >= t0
+        i_min = 0
+        for i, t in enumerate(t_cam):
+            if t >= t0:
+                i_min = i
+                break
+
+        # Trouver i_max : dernier index avec t_cam <= t1
+        i_max = nb - 1
+        for i in range(nb - 1, -1, -1):
+            if t_cam[i] <= t1:
+                i_max = i
+                break
+
+        # Sécurité si la zone est hors des temps disponibles
+        if i_min > i_max:
+            i_min, i_max = 0, nb - 1
+
+        return i_min, i_max
 
     def f_zone_movie(self):
         """Sélection / reset d'une zone temporelle de film (2 bornes)."""
@@ -1984,6 +2461,8 @@ class MainWindow(QMainWindow):
         else:
             return None
     
+
+
     def REFRESH(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
         self.RUN.Corr_Summary(All=True)
@@ -2012,12 +2491,6 @@ class MainWindow(QMainWindow):
             amp,
             Gauges_RUN,
         ) = self.Read_RUN(self.RUN)
-
-        if Time is not None and len(Time) > 0:
-            self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
-            self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
 
         state.time = Time
         state.spectre_number = spectre_number
@@ -2085,6 +2558,8 @@ class MainWindow(QMainWindow):
                 state.corr_curve.setData(state.t_cam, state.correlations)
             else:
                 state.corr_curve.setData([], [])
+
+        self._refresh_ddac_limits(state)
 #########################################################################################################################################################################################
 #? COMMANDE FILE
     def f_select_directory(self,file_name,file_label,name,type_file=".asc"):
@@ -2150,7 +2625,6 @@ class MainWindow(QMainWindow):
 
         # petit message d’info
         self.text_box_msg.setText(f"{n_spec} spectres chargés depuis le fichier spectro.")
-
 
     def select_spectro_file(self):
         self.loaded_filename_spectro=self.f_select_directory(self.loaded_filename_spectro,self.dir_label_spectro,"Spectrum",type_file=".asc")
@@ -2564,7 +3038,7 @@ class MainWindow(QMainWindow):
             print("ERROR:",e,"in lambda0")
 
 #########################################################################################################################################################################################
-#? COMMANDE Treateamnt Spectrum
+#? COMMANDE FIT
     def _build_pic_fit_problem(self, gauge_indices):
         """
         Construit :
@@ -3437,6 +3911,7 @@ class MainWindow(QMainWindow):
         # Enregistre l'état et finalise l'affichage
         self.runs[run_id] = state
         self._finalize_run_selection(state, name_select)
+        self._refresh_ddac_limits(state)
 
     def LOAD_Spectrum(self, item=None, Spectrum=None):
         """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
@@ -3690,6 +4165,7 @@ class MainWindow(QMainWindow):
         if self.liste_objets_widget.count() > 0:
             next_item = self.liste_objets_widget.item(0)
             self.SELECT_CEDd(item=next_item)
+    
     def Dell_Jauge(self):# - - - DELL JAUGE- - -#
         if self.index_jauge == -1:
             return print("jauge not select")
@@ -4019,7 +4495,6 @@ class MainWindow(QMainWindow):
         )
         self.Spectrum.Gauges[self.index_jauge].pics.append(X_pic)
 
-
     def Click_Zone(self):
         """Définit / efface la zone de fit pour la jauge courante, sans tracés Matplotlib."""
         if self.index_jauge == -1 or self.Spectrum is None:
@@ -4192,12 +4667,10 @@ class MainWindow(QMainWindow):
                 self.Print_fit_start()
                 
     def select_pic(self):
-        if self.bit_bypass:
-            return
-
-        self.index_pic_select = self.listbox_pic.currentRow()
-        if self.index_pic_select < 0:
-            return
+        if not self.bit_bypass:
+            self.index_pic_select = self.listbox_pic.currentRow()
+            if self.index_pic_select < 0:
+                return
 
         # Mise à jour X0/Y0
         self.X0 = self.Param0[self.index_jauge][self.index_pic_select][0]
@@ -4224,9 +4697,11 @@ class MainWindow(QMainWindow):
             "PIC SELECT " + self.Nom_pic[self.index_jauge][self.index_pic_select]
         )
 
-        # Le zoom et la superposition du pic sélectionné sont gérés par _refresh_spectrum_view()
-        # 5) Zoom (on prend la même zone que le pic sélectionné ou la zone globale)
+        # ------------- Données de zoom & pic sélectionné -------------
         S = self.Spectrum
+
+        y_pic = None
+
         if (
             self.index_jauge >= 0
             and self.index_pic_select >= 0
@@ -4237,27 +4712,55 @@ class MainWindow(QMainWindow):
             self.curve_zoom_pic.setData(S.wnb, y_pic)
             self.curve_spec_pic_select.setData(S.wnb, y_pic)
             self.curve_zoom_data.setData(S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
+            self.curve_zoom_data_brut.setData(S.wnb, S.spec- S.blfit)
         else:
             self.curve_zoom_pic.setData([], [])
             self.curve_spec_pic_select.setData([], [])
             if hasattr(S, "wnb") and hasattr(S, "spec"):
                 self.curve_zoom_data.setData(S.wnb, S.spec)
+                self.curve_zoom_data_brut.setData(S.wnb, S.spec)
             else:
                 self.curve_zoom_data.setData([], [])
+                self.curve_zoom_data_brut.setData([], [])
+                
 
-        # Contraindre aussi le ViewBox du zoom
-        if hasattr(S, "wnb") and hasattr(S, "spec"):
+        # ------------- Limites du ZOOM : basées sur le pic sélectionné -------------
+        if hasattr(S, "wnb") and S.wnb is not None:
             xz = np.asarray(S.wnb)
-            yz = np.asarray(S.spec)
-            vb_zoom = self.pg_zoom.getViewBox()
-            self._set_viewbox_limits_from_data(vb_zoom, xz, yz, padding=0.02)
 
-            if not self._zoom_limits_initialized:
-                try:
-                    vb_zoom.setXRange(float(xz[0]), float(xz[-1]), padding=0.02)
-                except Exception as e:
-                    print("Zoom XRange error:", e)
-                self._zoom_limits_initialized = True
+            if y_pic is not None:
+                y_zoom = np.asarray(y_pic, dtype=float)
+
+                # Option : ne zoomer que sur la zone où le pic est significatif
+                # par exemple là où y_pic > 10% du max
+                mask = y_zoom > (0.1 * np.nanmax(y_zoom))
+                if np.any(mask):
+                    xz_zoom = xz[mask]
+                    yz_zoom = y_zoom[mask]
+                else:
+                    # fallback : tout le spectre
+                    xz_zoom = xz
+                    yz_zoom = y_zoom
+            else:
+                # Pas de pic -> zoom sur le brut
+                if hasattr(S, "spec") and S.spec is not None:
+                    xz_zoom = xz
+                    yz_zoom = np.asarray(S.spec, dtype=float)
+                else:
+                    xz_zoom = xz
+                    yz_zoom = xz  # fallback bidon, mais ne devrait pas arriver
+
+            vb_zoom = self.pg_zoom.getViewBox()
+
+            # On ne garde PLUS le "une seule fois" : on veut que le zoom s'adapte
+            # à chaque sélection de pic, donc pas de _zoom_limits_initialized ici.
+            self._set_viewbox_limits_from_data(vb_zoom, xz_zoom, yz_zoom, padding=0.1)
+
+            try:
+                vb_zoom.setXRange(float(np.nanmin(xz_zoom)), float(np.nanmax(xz_zoom)), padding=0.1)
+            except Exception as e:
+                print("Zoom XRange error:", e)
+
 
     def f_pic_fit(self):
         n_sigma = int(self.sigma_pic_fit_entry.value())
@@ -4338,6 +4841,10 @@ class MainWindow(QMainWindow):
         self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot
         self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
 
+        self.curve_zoom_pic.setData(self.Spectrum.wnb, y_plot)
+        self.curve_spec_pic_select.setData(self.Spectrum.wnb, y_plot)
+        self.curve_zoom_data.setData(self.Spectrum.wnb, self.Spectrum.spec - (self.y_fit_start - y_plot) - self.Spectrum.blfit)
+        self.curve_zoom_data_brut.setData(S.wnb, S.spec- S.blfit)
         self.Print_fit_start()  # -> recalc global + refresh
       
     def Replace_pic(self):
@@ -4390,6 +4897,11 @@ class MainWindow(QMainWindow):
         self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot
         self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
 
+  
+        self.curve_zoom_pic.setData(self.Spectrum.wnb, y_plot)
+        self.curve_spec_pic_select.setData(self.Spectrum.wnb, y_plot)
+        self.curve_zoom_data.setData(self.Spectrum.wnb, self.Spectrum.spec - (self.y_fit_start - y_plot) - self.Spectrum.blfit)
+        self.curve_zoom_data_brut.setData(self.Spectrum.wnb, self.Spectrum.spec- self.Spectrum.blfit)
         self.Print_fit_start()
 
     def _CED_multi_fit(self):
@@ -4518,6 +5030,9 @@ class MainWindow(QMainWindow):
 
         # On revient sur le spectre initial dans l'UI
         self.index_spec = original_index_spec
+        self.spinbox_spec_index.blockSignals(True)
+        self.spinbox_spec_index.setValue(self.index_spec)
+        self.spinbox_spec_index.blockSignals(False)
         self.Spectrum   = self.RUN.Spectra[self.index_spec]
         self.LOAD_Spectrum(Spectrum=self.Spectrum)
         self.REFRESH()
