@@ -1648,6 +1648,13 @@ class MainWindow(QMainWindow):
 #########################################################################################################################################################################################
 #? COMMANDE
     def _on_pg_spectrum_click(self, mouse_event):
+        """Gère le clic gauche sur les vues spectrales et met à jour les marqueurs.
+
+        Le point cliqué est d'abord converti des coordonnées scène vers le ViewBox
+        actif (spectre principal ou zoom) afin de récupérer (x, y). Ces valeurs
+        déplacent les lignes infinies, la croix de zoom et peuvent déclencher la
+        sélection d'un pic lorsque la case « clic = select pic » est cochée.
+        """
         if mouse_event.button() != Qt.LeftButton:
             return
 
@@ -1669,6 +1676,7 @@ class MainWindow(QMainWindow):
         x = mouse_point.x()
         y = mouse_point.y()
 
+        # Conversion scène -> axes du plot : x = position spectrale, y = intensité
         self.X0, self.Y0 = x, y
         self.vline.setPos(x)
         self.hline.setPos(y)
@@ -1734,7 +1742,14 @@ class MainWindow(QMainWindow):
             self.bit_bypass = False
         
     def _refresh_spectrum_view(self):
-        """Met à jour *tous* les plots PyQtGraph à partir de self.Spectrum & co."""
+        """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
+
+        Les courbes de spectre, fit global, dérivée dY, baseline et FFT sont mises
+        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline, pg_fft).
+        La fonction ajuste aussi les limites de ViewBox et met à jour l'état local
+        (drapeau d'initialisation des limites) sans modifier la logique métier du
+        calcul du spectre.
+        """
         S = self.Spectrum
         if S is None:
             # on vide tout
@@ -1852,10 +1867,12 @@ class MainWindow(QMainWindow):
             self.pg_dy.setLimits(xMin=x_spec[0], xMax=x_spec[-1])
 
     def _refresh_ddac_limits(self, state: RunViewState) -> None:
-        """
-        Fixe proprement les limites des 4 graphes dDAC :
-        - P, dP/dt(+T), sigma : X = Time, Y = données de chaque graphe
-        - Δλ : X = Time (ou l'axe des données), Y = Δλ
+        """Ajuste les limites des graphes PyQtGraph liés aux données dDAC.
+
+        Les ViewBox P, dP/dt, σ et Δλ sont calées sur l'axe temps commun issu de
+        l'état `RunViewState`. Les valeurs Y sont évaluées depuis les courbes
+        déjà tracées, sans recalcul métier, afin de centrer les zooms et limiter
+        les déplacements hors données.
         """
         # ----- Axe temps commun -----
         Time = getattr(state, "time", None)
@@ -1927,56 +1944,6 @@ class MainWindow(QMainWindow):
             y_dlambda = np.concatenate(y_list_dlambda)
             vb_dlambda = self.pg_dlambda.getViewBox()
             self._set_viewbox_limits_from_data(vb_dlambda, x_time, y_dlambda, padding=0.02)
-
-    def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
-        """
-        Contraint les bornes du ViewBox en fonction des données.
-        - vb : le ViewBox (pg_spectrum.getViewBox(), pg_zoom.getViewBox(), etc.)
-        - x_data, y_data : 1D array-like
-        - padding : marge relative (2% par défaut)
-        """
-        if x_data is None:
-            return
-
-        x = np.asarray(x_data)
-        if x.size == 0:
-            return
-
-        x_min = float(np.nanmin(x))
-        x_max = float(np.nanmax(x))
-
-        if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
-            return
-
-        # petite marge
-        span_x = x_max - x_min
-        x0 = x_min - span_x * padding
-        x1 = x_max + span_x * padding
-
-        # Même chose pour Y si fourni
-        if y_data is not None:
-            y = np.asarray(y_data)
-            if y.size > 0:
-                y_min = float(np.nanmin(y))
-                y_max = float(np.nanmax(y))
-                if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
-                    span_y = y_max - y_min
-                    y0 = y_min - span_y * padding
-                    y1 = y_max + span_y * padding
-                else:
-                    y0 = y_min
-                    y1 = y_max
-            else:
-                y0 = None
-                y1 = None
-        else:
-            y0 = y1 = None
-
-        # Contraint les limites de pan/zoom
-        if y0 is not None and y1 is not None:
-            vb.setLimits(xMin=x0, xMax=x1, yMin=y0, yMax=y1)
-        else:
-            vb.setLimits(xMin=x0, xMax=x1)
 
     def execute_code(self, code=None):
         if code is None:
@@ -2092,6 +2059,13 @@ class MainWindow(QMainWindow):
         self.f_text_CEDd_print(t)
 
     def _on_ddac_click(self, mouse_event):
+        """Gère les clics sur les graphes temporels dDAC et synchronise l'état UI.
+
+        Le clic est transformé des coordonnées scène vers le ViewBox ciblé (P,
+        dP/dt, σ ou Δλ) pour extraire (t, valeur). Les lignes verticales, les
+        marqueurs scatter et les textes sont mis à jour, puis la sélection de
+        spectre/film est recalculée en fonction du temps cliqué.
+        """
         self.setFocus()
         pos = mouse_event.scenePos()
         vb = None
@@ -2188,95 +2162,22 @@ class MainWindow(QMainWindow):
         self.f_CEDd_update_print()
     
 
-    def _update_gauge_peaks_background(self):
-        """
-        Dessine en fond du spectre tous les pics de toutes les jauges,
-        depuis y = 0 (baseline supprimée).
-        """
-
-        # Supprimer anciens remplissages
-        if hasattr(self, "gauge_peak_items"):
-            for it in self.gauge_peak_items:
-                try:
-                    self.pg_spectrum.removeItem(it)
-                except Exception:
-                    pass
-        else:
-            self.gauge_peak_items = []
-
-        S = self.Spectrum
-        if S is None:
-            return
-
-        # X du spectre                                      
-        if not hasattr(S, "wnb") or S.wnb is None:
-            return
-        x = np.asarray(S.wnb, dtype=float)
-        if x.size == 0:
-            return
-
-        # Liste des contributions individuelles
-        if not self.list_y_fit_start or not S.Gauges:
-            return
-
-        new_items = []
-
-        # === Boucle sur les jauges ===
-        for j, G in enumerate(S.Gauges):
-
-            # couleurs des pics de cette jauge :
-            # G.color_print[1] contient typiquement une liste de couleurs pour les pics
-            colors_for_peaks = None
-            if hasattr(G, "color_print") and isinstance(G.color_print, (list, tuple)) and len(G.color_print) > 1:
-                colors_for_peaks = G.color_print[1]
-
-            # contributions individuelles y_pic
-            if j >= len(self.list_y_fit_start):
-                continue
-            list_peaks_j = self.list_y_fit_start[j]
-            if not list_peaks_j:
-                continue
-
-            # === Boucle sur les pics ===
-            for i, y_pic in enumerate(list_peaks_j):
-                if y_pic is None:
-                    continue
-
-                y_pic = np.asarray(y_pic, dtype=float)
-                if y_pic.size != x.size:
-                    continue
-
-                # Choix couleur
-                if colors_for_peaks and i < len(colors_for_peaks):
-                    col = colors_for_peaks[i]
-                    brush = pg.mkBrush(col)
-                    c = brush.color()
-                    c.setAlpha(80)
-                    brush = c
-                else:
-                    brush = (200, 200, 50, 60)  # jaune pâle par défaut
-
-                # === TRAÇAGE EN FOND ===
-                item = self.pg_spectrum.plot(
-                    x,
-                    y_pic,
-                    pen=None,
-                    fillLevel=0,      # <<<<<<<< baseline = 0 maintenant
-                    brush=brush,
-                )
-                item.setZValue(-5)  # Toujours derrière tout le reste
-                new_items.append(item)
-
-        self.gauge_peak_items = new_items
-
 
 #########################################################################################################################################################################################
 #? MOVIE 
     def _on_slider_movie_changed(self, idx: int):
+        """Callback Qt du slider vidéo : change l'index courant et rafraîchit l'image."""
         self.current_index = idx
         self._update_movie_frame()
 
     def _update_movie_frame(self):
+        """Affiche l'image courante du film et synchronise les repères temporels.
+
+        Le frame indexé par `self.current_index` est lu via `read_frame`, puis
+        affiché dans `img_item`. Les lignes verticales des graphes temporels sont
+        alignées sur le temps de la frame et, si disponible, la position spectrale
+        associée est rappelée via `line_nspec` et le texte d'info.
+        """
         state = self._get_state_for_run()
         if state is None or not state.index_cam:
             return
@@ -2475,7 +2376,13 @@ class MainWindow(QMainWindow):
         self._update_curves_for_run(state)
 
     def _update_curves_for_run(self, state: RunViewState):
-        """Met à jour les courbes existantes d'un run sans les recréer."""
+        """Met à jour les courbes PyQtGraph à partir des données d'un `RunViewState`.
+
+        Les listes temporelles et spectrales calculées par `Read_RUN` sont
+        réaffectées sur les courbes déjà créées (P, dP/dt, T, Δλ, piézo,
+        corrélation). Les attributs `state.time`, `state.spectre_number` et les
+        tracés sont actualisés sans recréer d'objets graphiques.
+        """
 
         (
             l_P,
@@ -5041,6 +4948,130 @@ class MainWindow(QMainWindow):
             self.text_box_msg.setText("Multi-fit chaîné interrompu par l'utilisateur.")
         else:
             self.text_box_msg.setText("Multi-fit chaîné terminé.")
+
+    # ============================================================
+    # Helpers graphiques / PyQtGraph
+    # ============================================================
+    def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
+        """Contraint les limites d'un ViewBox en fonction des données visibles.
+
+        Le padding ajoute une marge relative autour des bornes min/max détectées
+        pour éviter de coller les courbes aux bords. Aucun calcul métier n'est
+        modifié : seules les limites de navigation (pan/zoom) sont recalculées.
+        """
+
+        if x_data is None:
+            return
+
+        x = np.asarray(x_data)
+        if x.size == 0:
+            return
+
+        x_min = float(np.nanmin(x))
+        x_max = float(np.nanmax(x))
+
+        if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+            return
+
+        span_x = x_max - x_min
+        x0 = x_min - span_x * padding
+        x1 = x_max + span_x * padding
+
+        if y_data is not None:
+            y = np.asarray(y_data)
+            if y.size > 0:
+                y_min = float(np.nanmin(y))
+                y_max = float(np.nanmax(y))
+                if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
+                    span_y = y_max - y_min
+                    y0 = y_min - span_y * padding
+                    y1 = y_max + span_y * padding
+                else:
+                    y0 = y_min
+                    y1 = y_max
+            else:
+                y0 = None
+                y1 = None
+        else:
+            y0 = y1 = None
+
+        if y0 is not None and y1 is not None:
+            vb.setLimits(xMin=x0, xMax=x1, yMin=y0, yMax=y1)
+        else:
+            vb.setLimits(xMin=x0, xMax=x1)
+
+    def _update_gauge_peaks_background(self):
+        """Dessine en fond du spectre la contribution de chaque pic de jauge.
+
+        Les zones remplies utilisent les couleurs définies sur chaque jauge
+        (G.color_print) et sont forcées derrière les courbes principales afin de
+        faciliter la lecture. Aucune donnée n'est modifiée, seul l'habillage
+        graphique du `pg_spectrum` est mis à jour.
+        """
+
+        if hasattr(self, "gauge_peak_items"):
+            for it in self.gauge_peak_items:
+                try:
+                    self.pg_spectrum.removeItem(it)
+                except Exception:
+                    pass
+        else:
+            self.gauge_peak_items = []
+
+        S = self.Spectrum
+        if S is None:
+            return
+
+        if not hasattr(S, "wnb") or S.wnb is None:
+            return
+        x = np.asarray(S.wnb, dtype=float)
+        if x.size == 0:
+            return
+
+        if not self.list_y_fit_start or not S.Gauges:
+            return
+
+        new_items = []
+
+        for j, G in enumerate(S.Gauges):
+            colors_for_peaks = None
+            if hasattr(G, "color_print") and isinstance(G.color_print, (list, tuple)) and len(G.color_print) > 1:
+                colors_for_peaks = G.color_print[1]
+
+            if j >= len(self.list_y_fit_start):
+                continue
+            list_peaks_j = self.list_y_fit_start[j]
+            if not list_peaks_j:
+                continue
+
+            for i, y_pic in enumerate(list_peaks_j):
+                if y_pic is None:
+                    continue
+
+                y_pic = np.asarray(y_pic, dtype=float)
+                if y_pic.size != x.size:
+                    continue
+
+                if colors_for_peaks and i < len(colors_for_peaks):
+                    col = colors_for_peaks[i]
+                    brush = pg.mkBrush(col)
+                    c = brush.color()
+                    c.setAlpha(80)
+                    brush = c
+                else:
+                    brush = (200, 200, 50, 60)
+
+                item = self.pg_spectrum.plot(
+                    x,
+                    y_pic,
+                    pen=None,
+                    fillLevel=0,
+                    brush=brush,
+                )
+                item.setZValue(-5)
+                new_items.append(item)
+
+        self.gauge_peak_items = new_items
 
     def add_zone(self):
         return print("A CODER")
