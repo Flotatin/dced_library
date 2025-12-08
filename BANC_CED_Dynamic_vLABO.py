@@ -8,6 +8,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
+from string import Template
 from typing import Optional
 
 import cv2
@@ -48,7 +49,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 from scipy.optimize import curve_fit
-style = """
+STYLE_TEMPLATE = Template(
+    """
        /* Appliquer la police scientifique */
 * {
     font-family: 'Bitstream Vera Sans Mono', monospace;
@@ -57,106 +59,179 @@ style = """
 
 /* Fond principal */
 QMainWindow {
-    background-color: #2b2b2b;
+    background-color: ${window};
 }
 
 /* Style général des widgets */
 QWidget {
-    color: #e0e0e0;
-    background-color: #333333;
+    color: ${text};
+    background-color: ${background};
 }
 
 /* Combobox */
 
 QComboBox {
-    border: 1px solid #0099cc;
+    border: 1px solid ${accent};
     border-radius: 4px;
     padding: 5px;
 }
 
 QComboBox QAbstractItemView {
-    selection-background-color: grey;
-    selection-color: white;
+    selection-background-color: ${selection};
+    selection-color: ${selection_text};
 }
 
 /* Boutons */
 QPushButton {
-    background-color: #0099cc; /* Bleu scientifique */
-    color: #ffffff;
+    background-color: ${accent};
+    color: ${button_text};
     border-radius: 5px;
     padding: 8px;
     font-size: 14px;
 }
 QPushButton:hover {
-    background-color: #0077aa;
+    background-color: ${accent_hover};
 }
 QPushButton:pressed {
-    background-color: #005577;
+    background-color: ${accent_pressed};
 }
 
 /* Champs de saisie */
 QLineEdit, QSpinBox, QTextEdit ,QDoubleSpinBox{
-    background-color: #444444;
-    color: #e0e0e0;
-    border: 1px solid #0099cc;
+    background-color: ${input_background};
+    color: ${text};
+    border: 1px solid ${accent};
     border-radius: 4px;
     padding: 5px;
 }
-QLineEdit:focus, QSpinBox:focus {
-    border: 1px solid #ffaa55;
-}
-QLineEdit:focus, QDoubleSpinBox:focus {
-    border: 1px solid #ffaa55;
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid ${selection};
 }
 
 /* Menus et barres de menu */
 QMenuBar {
-    background-color: #222222;
-    color: #e0e0e0;
+    background-color: ${menu_background};
+    color: ${text};
 }
 QMenu {
-    background-color: #222222;
-    color: #e0e0e0;
+    background-color: ${menu_background};
+    color: ${text};
 }
 QMenu::item:selected {
-    background-color: #555555;
-    color: #ffaa55;
+    background-color: ${selection};
+    color: ${selection_text};
 }
 
 /* Barres de défilement */
 QScrollBar:vertical, QScrollBar:horizontal {
-    background: #444444;
+    background: ${input_background};
     width: 12px;
 }
 QScrollBar::handle {
-    background: #0099cc;
+    background: ${accent};
     border-radius: 6px;
 }
 QScrollBar::handle:hover {
-    background: #0077aa;
+    background: ${accent_hover};
 }
 
 /* Cases à cocher et boutons radio */
 QCheckBox, QRadioButton {
-    color: #e0e0e0;
+    color: ${text};
 }
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
-    background-color: #0099cc;
+    background-color: ${accent};
 }
 
 /* Barres d onglets */
 QTabBar::tab {
-    background-color: #444444;
-    color: #e0e0e0;
+    background-color: ${input_background};
+    color: ${text};
     padding: 6px;
     border-radius: 5px;
 }
 QTabBar::tab:selected {
-    background-color: #0099cc;
-    color: white;
+    background-color: ${accent};
+    color: ${button_text};
 }
 
 """
+)
+
+THEMES = {
+    "dark": {
+        "window": "#2b2b2b",
+        "background": "#333333",
+        "menu_background": "#222222",
+        "text": "#e0e0e0",
+        "button_text": "#ffffff",
+        "accent": "#0099cc",
+        "accent_hover": "#0077aa",
+        "accent_pressed": "#005577",
+        "input_background": "#444444",
+        "selection": "#ffaa55",
+        "selection_text": "#ffffff",
+        "plot_background": "#333333",
+        "axis_pen": "#e0e0e0",
+        "grid_alpha": 0.3,
+        "pens": {
+            "spectrum_data": {"color": "#ffffff"},
+            "spectrum_fit": {"color": "#00ff00", "width": 2},
+            "spectrum_pic_brush": (255, 0, 0, 120),
+            "dy": {"color": "#ffff00"},
+            "zero_line": {"color": "#000000"},
+            "baseline_brut": {"color": "#ffffff"},
+            "baseline_fit": {"color": "#00ffff"},
+            "fft": {"color": "#ff00ff"},
+            "zoom_data": {"color": "#000000"},
+            "zoom_data_brut": {"color": "#ffffff"},
+            "zoom_pic_brush": (255, 0, 0, 80),
+            "selection_line": {"color": "#00ff00", "width": 1},
+            "cross_zoom": {"color": "#ff0000"},
+            "text_item": "#ffffff",
+            "line_t": {"color": "#00ff00", "width": 1},
+            "baseline_time": {"color": "#000000", "width": 2},
+            "zone_movie": {"color": "#ffff00", "style": Qt.DashLine},
+            "scatter": {"color": "#ffffff", "width": 2},
+        },
+    },
+    "light": {
+        "window": "#f2f2f2",
+        "background": "#ffffff",
+        "menu_background": "#e5e5e5",
+        "text": "#1e1e1e",
+        "button_text": "#ffffff",
+        "accent": "#0066cc",
+        "accent_hover": "#005bb5",
+        "accent_pressed": "#004c99",
+        "input_background": "#f6f6f6",
+        "selection": "#ffb347",
+        "selection_text": "#1e1e1e",
+        "plot_background": "#f7f7f7",
+        "axis_pen": "#1e1e1e",
+        "grid_alpha": 0.25,
+        "pens": {
+            "spectrum_data": {"color": "#0c2340"},
+            "spectrum_fit": {"color": "#1e8449", "width": 2},
+            "spectrum_pic_brush": (220, 20, 60, 120),
+            "dy": {"color": "#7f6000"},
+            "zero_line": {"color": "#555555"},
+            "baseline_brut": {"color": "#1e1e1e"},
+            "baseline_fit": {"color": "#1b4f72"},
+            "fft": {"color": "#884ea0"},
+            "zoom_data": {"color": "#1e1e1e"},
+            "zoom_data_brut": {"color": "#5d6d7e"},
+            "zoom_pic_brush": (220, 20, 60, 80),
+            "selection_line": {"color": "#1e8449", "width": 1},
+            "cross_zoom": {"color": "#c0392b"},
+            "text_item": "#1e1e1e",
+            "line_t": {"color": "#1e8449", "width": 1},
+            "baseline_time": {"color": "#555555", "width": 2},
+            "zone_movie": {"color": "#d68910", "style": Qt.DashLine},
+            "scatter": {"color": "#1e1e1e", "width": 2},
+        },
+    },
+}
 
 Setup_mode = False
 
@@ -315,6 +390,8 @@ class MainWindow(QMainWindow):
     def __init__(self, folder_start=None):
         super().__init__()
 
+        self.current_theme = "dark"
+
         # --- Variables "métier" de base ---
         self.Spectrum = None
         self.variables = Variables()
@@ -361,6 +438,8 @@ class MainWindow(QMainWindow):
         self._setup_text_box_msg()       # (1, 0)
         self._setup_layout_stretch()
 
+        self._apply_theme(self.current_theme)
+
         # Autres attributs divers
         self.viewer = None
         self.bit_c_reduite = True
@@ -385,6 +464,127 @@ class MainWindow(QMainWindow):
     # ==================================================================
     # ===============   UTILITAIRES ÉTAT DE RUN   ======================
     # ==================================================================
+    def _get_theme(self, name: Optional[str] = None):
+        return THEMES.get(name or self.current_theme, THEMES["dark"])
+
+    def _mk_pen(self, spec):
+        if isinstance(spec, dict):
+            return pg.mkPen(**spec)
+        return pg.mkPen(spec)
+
+    def _build_stylesheet(self, theme):
+        return STYLE_TEMPLATE.safe_substitute(
+            window=theme["window"],
+            background=theme["background"],
+            text=theme["text"],
+            accent=theme["accent"],
+            accent_hover=theme["accent_hover"],
+            accent_pressed=theme["accent_pressed"],
+            input_background=theme["input_background"],
+            selection=theme["selection"],
+            selection_text=theme["selection_text"],
+            menu_background=theme["menu_background"],
+            button_text=theme["button_text"],
+        )
+
+    def _apply_plot_item_theme(self, plot_item, theme):
+        if plot_item is None:
+            return
+
+        viewbox = plot_item.getViewBox()
+        if viewbox is not None:
+            viewbox.setBackgroundColor(theme["plot_background"])
+
+        axis_pen = self._mk_pen(theme["axis_pen"])
+        text_pen = self._mk_pen(theme["text"])
+        for name in ("bottom", "left", "right", "top"):
+            axis = plot_item.getAxis(name)
+            if axis is not None:
+                axis.setPen(axis_pen)
+                axis.setTextPen(text_pen)
+
+        plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
+
+    def _apply_theme(self, theme_name: str):
+        theme = self._get_theme(theme_name)
+        self.current_theme = theme_name if theme_name in THEMES else "dark"
+
+        if hasattr(self, "theme_toggle_button"):
+            self.theme_toggle_button.blockSignals(True)
+            self.theme_toggle_button.setChecked(self.current_theme == "light")
+            self.theme_toggle_button.setText(
+                "Light mode" if self.current_theme == "light" else "Dark mode"
+            )
+            self.theme_toggle_button.blockSignals(False)
+
+        self.setStyleSheet(self._build_stylesheet(theme))
+
+        if hasattr(self, "pg_spec"):
+            self.pg_spec.setBackground(theme["plot_background"])
+            for plot in (
+                self.pg_zoom,
+                self.pg_baseline,
+                self.pg_fft,
+                self.pg_dy,
+                self.pg_spectrum,
+            ):
+                self._apply_plot_item_theme(plot, theme)
+
+            pens = theme["pens"]
+            self.curve_spec_data.setPen(self._mk_pen(pens["spectrum_data"]))
+            self.curve_spec_fit.setPen(self._mk_pen(pens["spectrum_fit"]))
+            self.curve_spec_pic_select.setBrush(pg.mkBrush(pens["spectrum_pic_brush"]))
+            self.curve_dy.setPen(self._mk_pen(pens["dy"]))
+            self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
+            self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
+            self.curve_baseline_blfit.setPen(self._mk_pen(pens["baseline_fit"]))
+            self.curve_fft.setPen(self._mk_pen(pens["fft"]))
+            self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
+            self.curve_zoom_data_brut.setPen(self._mk_pen(pens["zoom_data_brut"]))
+            self.curve_zoom_pic.setBrush(pg.mkBrush(pens["zoom_pic_brush"]))
+            self.vline.setPen(self._mk_pen(pens["selection_line"]))
+            self.hline.setPen(self._mk_pen(pens["selection_line"]))
+            self.cross_zoom.setBrush(pg.mkBrush(pens["cross_zoom"]))
+            self.pg_text_label.setColor(pens["text_item"])
+
+        if hasattr(self, "pg_ddac"):
+            self.pg_ddac.setBackground(theme["plot_background"])
+            for plot in (
+                self.pg_P,
+                self.pg_dPdt,
+                self.pg_sigma,
+                self.pg_movie,
+                self.pg_dlambda,
+            ):
+                self._apply_plot_item_theme(plot, theme)
+
+            pens = theme["pens"]
+            line_pen = self._mk_pen(pens["line_t"])
+            self.line_t_P.setPen(line_pen)
+            self.line_t_dPdt.setPen(line_pen)
+            self.line_t_sigma.setPen(line_pen)
+            self.line_nspec.setPen(line_pen)
+            self.line_p0.setPen(self._mk_pen(pens["baseline_time"]))
+
+            zone_pen = self._mk_pen(pens["zone_movie"])
+            for line in self.zone_movie_lines:
+                line.setPen(zone_pen)
+
+            scatter_pen = self._mk_pen(pens["scatter"])
+            for scatter in (
+                self.scatter_P,
+                self.scatter_dPdt,
+                self.scatter_sigma,
+                self.scatter_dlambda,
+            ):
+                scatter.setPen(scatter_pen)
+
+        if hasattr(self, "pg_text"):
+            self.pg_text.setBackgroundColor(theme["plot_background"])
+
+    def _toggle_theme(self, checked: bool):
+        self._apply_theme("light" if checked else "dark")
+
     def _get_run_id(self, ced):
         """Retourne une clé stable pour un CEDd donné."""
 
@@ -666,6 +866,12 @@ class MainWindow(QMainWindow):
         ParamBox = QGroupBox("Tools")
         ParamBoxLayout = QVBoxLayout()
 
+        self.theme_toggle_button = QPushButton("Dark mode")
+        self.theme_toggle_button.setCheckable(True)
+        self.theme_toggle_button.setChecked(False)
+        self.theme_toggle_button.toggled.connect(self._toggle_theme)
+        ParamBoxLayout.addWidget(self.theme_toggle_button)
+
         # ---- Bouton pour le kernel Python ----
         self.python_kernel_button = QPushButton("Show Python Kernel")
         self.python_kernel_button.setCheckable(True)
@@ -891,78 +1097,80 @@ class MainWindow(QMainWindow):
         self.SpectraBox = QGroupBox("Spectrum")
         SpectraBoxFirstLayout = QVBoxLayout()
 
+        theme = self._get_theme()
+
         # ================== WIDGET PyQtGraph ==================
         self.pg_spec = pg.GraphicsLayoutWidget()
-        self.pg_spec.setBackground("#333333")
+        self.pg_spec.setBackground(theme["plot_background"])
 
         # ---- Layout 3x2 : (zoom / baseline / FFT) x (spectrum / dY) ----
         # Row 0, Col 0 : ZOOM
         self.pg_zoom = self.pg_spec.addPlot(row=0, col=0)
         self.pg_zoom.hideAxis('bottom')
         self.pg_zoom.hideAxis('left')
-        self.pg_zoom.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_zoom.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # Row 1, Col 0 : BASELINE
         self.pg_baseline = self.pg_spec.addPlot(row=1, col=0)
-        self.pg_baseline.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_baseline.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_baseline.setLabel('bottom', 'X')
         self.pg_baseline.setLabel('left', 'Intensity')
 
         # Row 2, Col 0 : FFT
         self.pg_fft = self.pg_spec.addPlot(row=2, col=0)
-        self.pg_fft.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_fft.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_fft.setLabel('bottom', 'f')
         self.pg_fft.setLabel('left', '|F|')
 
         # Row 2, Col 1 : dY
         self.pg_dy = self.pg_spec.addPlot(row=2, col=1)
-        self.pg_dy.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_dy.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_dy.setLabel('bottom', 'X')
         self.pg_dy.setLabel('left', 'dY')
 
         # Row 0–1, Col 1 : SPECTRUM
         self.pg_spectrum = self.pg_spec.addPlot(row=0, col=1, rowspan=2)
-        self.pg_spectrum.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_spectrum.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_spectrum.setLabel('bottom', 'X (U.A)')
         self.pg_spectrum.setLabel('left', 'Y (U.A)')
 
         # ================== COURBES PERSISTANTES ==================
         # Spectre corrigé
-        self.curve_spec_data = self.pg_spectrum.plot(pen='w')  # Spectrum.y_corr
+        self.curve_spec_data = self.pg_spectrum.plot(pen=self._mk_pen(theme["pens"]["spectrum_data"]))  # Spectrum.y_corr
 
         # Fit total (somme des pics)
-        self.curve_spec_fit = self.pg_spectrum.plot(pen=pg.mkPen('#00ff00', width=2))
+        self.curve_spec_fit = self.pg_spectrum.plot(pen=self._mk_pen(theme["pens"]["spectrum_fit"]))
 
         # Pic sélectionné (remplissage)
         self.curve_spec_pic_select = self.pg_spectrum.plot(
-            pen=None, fillLevel=0, brush=(255, 0, 0, 120)
+            pen=None, fillLevel=0, brush=pg.mkBrush(theme["pens"]["spectrum_pic_brush"])
         )
 
         # dY
-        self.curve_dy = self.pg_dy.plot(pen='y')
-        self.pg_dy.addLine(y=0, pen=pg.mkPen('k'))
+        self.curve_dy = self.pg_dy.plot(pen=self._mk_pen(theme["pens"]["dy"]))
+        self.line_dy_zero = self.pg_dy.addLine(y=0, pen=self._mk_pen(theme["pens"]["zero_line"]))
 
         # Baseline : brut + baseline
-        self.curve_baseline_brut = self.pg_baseline.plot(pen='w')  # Spectrum.spec
-        self.curve_baseline_blfit = self.pg_baseline.plot(pen='c')  # Spectrum.blfit
+        self.curve_baseline_brut = self.pg_baseline.plot(pen=self._mk_pen(theme["pens"]["baseline_brut"]))  # Spectrum.spec
+        self.curve_baseline_blfit = self.pg_baseline.plot(pen=self._mk_pen(theme["pens"]["baseline_fit"]))  # Spectrum.blfit
 
         # FFT
-        self.curve_fft = self.pg_fft.plot(pen='m')
+        self.curve_fft = self.pg_fft.plot(pen=self._mk_pen(theme["pens"]["fft"]))
 
         # Zoom : data + pic sélectionné
-        self.curve_zoom_data = self.pg_zoom.plot(pen='k')
-        self.curve_zoom_data_brut = self.pg_zoom.plot(pen='w')
+        self.curve_zoom_data = self.pg_zoom.plot(pen=self._mk_pen(theme["pens"]["zoom_data"]))
+        self.curve_zoom_data_brut = self.pg_zoom.plot(pen=self._mk_pen(theme["pens"]["zoom_data_brut"]))
         self.curve_zoom_pic = self.pg_zoom.plot(
-            pen=None, fillLevel=0, brush=(255, 0, 0, 80)
+            pen=None, fillLevel=0, brush=pg.mkBrush(theme["pens"]["zoom_pic_brush"])
         )
 
         # ================== CROIX / LIGNES ==================
-        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
-        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('g', width=1))
+        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["selection_line"]))
+        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=self._mk_pen(theme["pens"]["selection_line"]))
         self.pg_spectrum.addItem(self.vline)
         self.pg_spectrum.addItem(self.hline)
 
-        self.cross_zoom = pg.ScatterPlotItem(symbol="+",pen=None, brush='r', size=10)
+        self.cross_zoom = pg.ScatterPlotItem(symbol="+",pen=None, brush=pg.mkBrush(theme["pens"]["cross_zoom"]), size=10)
         self.pg_zoom.addItem(self.cross_zoom)
 
         # ================== ÉTAT LOGIQUE ==================
@@ -1053,6 +1261,8 @@ class MainWindow(QMainWindow):
         group_graphique = QGroupBox("dDAC")
         layout_graphique = QVBoxLayout()
 
+        theme = self._get_theme()
+
         movie_layout = QHBoxLayout()
         # Slider Qt pour index d'image
         self.slider = QSlider(Qt.Horizontal)
@@ -1077,7 +1287,7 @@ class MainWindow(QMainWindow):
 
         layout_graphique.addLayout(movie_layout)
         # FPS
-        
+
         self.fps_play_spinbox = QSpinBox()
         self.fps_play_spinbox.setRange(1, 1000)
         self.fps_play_spinbox.setValue(100)
@@ -1086,23 +1296,23 @@ class MainWindow(QMainWindow):
 
         # ================== WIDGET PyQtGraph ==================
         self.pg_ddac = pg.GraphicsLayoutWidget()
-        self.pg_ddac.setBackground("#333333")
+        self.pg_ddac.setBackground(theme["plot_background"])
 
         # Col 0 : P, dP/dt/T, sigma
         self.pg_P = self.pg_ddac.addPlot(row=0, col=0)
         self.pg_P.setLabel('bottom', 'Time (s)')
         self.pg_P.setLabel('left', 'P (GPa)')
-        self.pg_P.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_P.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         self.pg_dPdt = self.pg_ddac.addPlot(row=1, col=0)
         self.pg_dPdt.setLabel('bottom', 'Time (s)')
         self.pg_dPdt.setLabel('left', 'dP/dt (GPa/ms), T (K)')
-        self.pg_dPdt.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_dPdt.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         self.pg_sigma = self.pg_ddac.addPlot(row=2, col=0)
         self.pg_sigma.setLabel('bottom', 'Time (s)')
         self.pg_sigma.setLabel('left', 'sigma (nm)')
-        self.pg_sigma.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_sigma.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # Col 1 : IMAGE + Δλ
         self.pg_movie = self.pg_ddac.addPlot(row=0, col=1)
@@ -1114,13 +1324,13 @@ class MainWindow(QMainWindow):
 
         self.pg_text = self.pg_ddac.addViewBox(row=1, col=1)
         self.pg_text.setAspectLocked(False)
-        self.pg_text_label = pg.TextItem(color='w',)
+        self.pg_text_label = pg.TextItem(color=theme["pens"]["text_item"],)
         self.pg_text.addItem(self.pg_text_label)
 
         self.pg_dlambda = self.pg_ddac.addPlot(row=2, col=1)
         self.pg_dlambda.setLabel('bottom', 'Spectrum index')
         self.pg_dlambda.setLabel('left', 'Δλ12 (nm)')
-        self.pg_dlambda.showGrid(x=True, y=True, alpha=0.3)
+        self.pg_dlambda.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # ================== COURBES PERSISTANTES ==================
         self.curves_P = []        # une courbe par jauge
@@ -1132,23 +1342,23 @@ class MainWindow(QMainWindow):
         self.curves_dlambda = []
 
         # Ligne verticale pour t sélectionné
-        self.line_t_P = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
-        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
-        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
-        linep0=pg.InfiniteLine(0,angle=0, movable=False, pen=pg.mkPen('k', width=2))
-        self.pg_P.addItem(linep0)
+        self.line_t_P = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
+        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
+        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
+        self.line_p0 = pg.InfiniteLine(0,angle=0, movable=False, pen=self._mk_pen(theme["pens"]["baseline_time"]))
+        self.pg_P.addItem(self.line_p0)
         self.pg_P.addItem(self.line_t_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
 
-        self.line_nspec = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('g', width=1))
+        self.line_nspec = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
         self.pg_dlambda.addItem(self.line_nspec)
 
         # Zone temporelle film (bornes)
         self.zone_movie = [None, None]
         self.zone_movie_lines = [
-            pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', style=Qt.DashLine)),
-            pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', style=Qt.DashLine))
+            pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["zone_movie"])),
+            pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["zone_movie"]))
         ]
         for line in self.zone_movie_lines:
             self.pg_P.addItem(line)
@@ -1159,7 +1369,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_P = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=pg.mkPen('w', width=2),
+            pen=self._mk_pen(theme["pens"]["scatter"]),
             brush=None,          # pas de remplissage
             size=10,
             symbol='+'           # croix
@@ -1168,7 +1378,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_dPdt = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=pg.mkPen('w', width=2),
+            pen=self._mk_pen(theme["pens"]["scatter"]),
             brush=None,
             size=10,
             symbol='+'
@@ -1177,7 +1387,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_sigma = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=pg.mkPen('w', width=2),
+            pen=self._mk_pen(theme["pens"]["scatter"]),
             brush=None,
             size=10,
             symbol='+'
@@ -1186,7 +1396,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_dlambda = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=pg.mkPen('w', width=2),
+            pen=self._mk_pen(theme["pens"]["scatter"]),
             brush=None,
             size=10,
             symbol='+'
@@ -5079,7 +5289,6 @@ class MainWindow(QMainWindow):
     
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.setStyleSheet(style)
 
     window = MainWindow(folder_start)
     window.show()
