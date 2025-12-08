@@ -1,30 +1,40 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+
 class Spectrum:
-    def __init__(self,wnb,spec,Gauges=[],type_filtre="svg",param_f=[9,2],deg_baseline=0,E=None): #lambda0_s=None,lambda0_r=None,lambda0_SrFCl = None,Temperture=False,Model="psdV",pic
-        self.wnb=np.array(wnb)
-        self.spec=spec
-        self.spec_brut=spec
-        self.param_f=param_f
-        self.deg_baseline=deg_baseline
-        self.type_filtre=type_filtre
-        self.y_filtre,self.blfit=None,None
-        self.x_corr=wnb
+    def __init__(self, wnb, spec, Gauges=None, type_filtre="svg", param_f=None, deg_baseline=0, E=None):
+        if Gauges is None:
+            Gauges = []
+        if param_f is None:
+            param_f = [9, 2]
+
+        self.wnb = np.array(wnb)
+        self.spec = spec
+        self.spec_brut = spec
+        self.param_f = param_f
+        self.deg_baseline = deg_baseline
+        self.type_filtre = type_filtre
+        self.y_filtre, self.blfit = None, None
+        self.x_corr = wnb
         self.Data_treatement(print_data=False)
-        self.E=E
-        self.X=None
-        self.Y=None
-        self.dY=None
-        self.bit_model=False
-        self.model=None
-        self.fit="Fit Non effectué"
-        self.bit_fit=False
-        self.lamb_fit=None
-        self.indexX=None
-        #FIT PIC
-        self.Gauges=Gauges
-        self.lambda_error=round((self.wnb[-1]-self.wnb[0])*0.5/len(self.wnb),4)
-        #SYNTHESE
-        self.study=pd.DataFrame()
-        self.help="Spectre: etude de spectre"
+        self.E = E
+        self.X = None
+        self.Y = None
+        self.dY = None
+        self.bit_model = False
+        self.model = None
+        self.fit = "Fit Non effectué"
+        self.bit_fit = False
+        self.lamb_fit = None
+        self.indexX = None
+        # FIT PIC
+        self.Gauges = Gauges
+        self.lambda_error = round((self.wnb[-1] - self.wnb[0]) * 0.5 / len(self.wnb), 4)
+        # SYNTHESE
+        self.study = pd.DataFrame()
+        self.help = "Spectre: etude de spectre"
     
     def Corr(self,list_lamb0):
         for i in range(len(self.Gauges)):

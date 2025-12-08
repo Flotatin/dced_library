@@ -3,13 +3,29 @@ import sys
 import pandas as pd
 import lecroyscope
 import pyqtgraph as pg
-from PyQt5.QtGui import QKeyEvent,QFont
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QHBoxLayout, QWidget, QFileDialog , QLineEdit , QListWidget, QCheckBox, QLabel ,QGroupBox, QVBoxLayout ,QComboBox
-from PyQt5.QtCore import Qt
-from scipy.signal import savgol_filter
-from tkinter import filedialog
 import os
 import re
+from tkinter import filedialog
+
+import pyqtgraph as pg
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QKeyEvent
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QCheckBox,
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+from scipy.signal import savgol_filter
 
 
 

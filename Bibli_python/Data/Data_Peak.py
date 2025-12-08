@@ -1,4 +1,8 @@
 
+from dataclasses import dataclass, field
+
+
+@dataclass
 class data_Peak:
     """
     Conteneur de données pour un pic.
@@ -9,6 +13,7 @@ class data_Peak:
             - spread = sigma -> on fabrique min/max avec l'argument `inter`
             - OU spread = (min, max) -> utilisé tel quel.
     """
+
     name: str
     model: str
     params: dict = field(default_factory=dict)

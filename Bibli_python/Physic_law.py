@@ -1,5 +1,6 @@
 "Pressure Law"
-
+import numpy as np
+from pynverse import inversefunc
 
 def Raman_Dc12__2003_Occelli(peakmax,lamb0=1333,sigmalambda=None):
     deltalambda=peakmax-lamb0
