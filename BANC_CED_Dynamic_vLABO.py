@@ -446,8 +446,11 @@ class MainWindow(QMainWindow):
         self.spinbox_spec_index.setRange(0, max(0, n_spec - 1))
         self.spinbox_spec_index.setValue(0)
         self.spinbox_spec_index.blockSignals(False)
-
         self.index_spec = 0
+        self.bit_bypass = True
+        self.LOAD_Spectrum()
+        self.bit_bypass = False
+        self.Update_Print()
 
     # ==================================================================
     # ===============   OUTILS D'OBJETS PYQTGRAPH   ====================
@@ -496,10 +499,7 @@ class MainWindow(QMainWindow):
         if y_arrays:
             y_concat = np.concatenate(y_arrays)
             self._set_viewbox_limits_from_data(viewbox, x_data, y_concat, padding=0.02)
-        self.bit_bypass = True
-        self.LOAD_Spectrum()
-        self.bit_bypass = False
-        self.Update_Print()
+        
 
     # ==================================================================
     # ===============  CONFIG FENÊTRE & LAYOUT GÉNÉRAL  ================
@@ -514,7 +514,6 @@ class MainWindow(QMainWindow):
         self.grid_layout.setColumnStretch(1, 0)
         self.grid_layout.setColumnStretch(2, 5)
         self.grid_layout.setColumnStretch(3, 5)
-        self.grid_layout.setColumnStretch(4, 5)
         self.grid_layout.setRowStretch(0, 5)
         self.grid_layout.setRowStretch(1, 1)
         self.grid_layout.setRowStretch(2, 2)
