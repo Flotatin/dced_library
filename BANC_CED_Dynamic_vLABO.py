@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -187,7 +188,7 @@ THEMES = {
             "zoom_data_brut": {"color": "#ffffff"},
             "zoom_pic_brush": (255, 0, 0, 80),
             "selection_line": {"color": "#00ff00", "width": 1},
-            "cross_zoom": {"color": "#ff0000"},
+            "cross_zoom": "#ff0000",
             "text_item": "#ffffff",
             "line_t": {"color": "#00ff00", "width": 1},
             "baseline_time": {"color": "#000000", "width": 2},
@@ -223,7 +224,7 @@ THEMES = {
             "zoom_data_brut": {"color": "#5d6d7e"},
             "zoom_pic_brush": (220, 20, 60, 80),
             "selection_line": {"color": "#1e8449", "width": 1},
-            "cross_zoom": {"color": "#c0392b"},
+            "cross_zoom": "#c0392b",
             "text_item": "#1e1e1e",
             "line_t": {"color": "#1e8449", "width": 1},
             "baseline_time": {"color": "#555555", "width": 2},
@@ -233,80 +234,6 @@ THEMES = {
     },
 }
 
-THEMES = {
-    "dark": {
-        "window": "#2b2b2b",
-        "background": "#333333",
-        "menu_background": "#222222",
-        "text": "#e0e0e0",
-        "button_text": "#ffffff",
-        "accent": "#0099cc",
-        "accent_hover": "#0077aa",
-        "accent_pressed": "#005577",
-        "input_background": "#444444",
-        "selection": "#ffaa55",
-        "selection_text": "#ffffff",
-        "plot_background": "#333333",
-        "axis_pen": "#e0e0e0",
-        "grid_alpha": 0.3,
-        "pens": {
-            "spectrum_data": {"color": "#ffffff"},
-            "spectrum_fit": {"color": "#00ff00", "width": 2},
-            "spectrum_pic_brush": (255, 0, 0, 120),
-            "dy": {"color": "#ffff00"},
-            "zero_line": {"color": "#000000"},
-            "baseline_brut": {"color": "#ffffff"},
-            "baseline_fit": {"color": "#00ffff"},
-            "fft": {"color": "#ff00ff"},
-            "zoom_data": {"color": "#000000"},
-            "zoom_data_brut": {"color": "#ffffff"},
-            "zoom_pic_brush": (255, 0, 0, 80),
-            "selection_line": {"color": "#00ff00", "width": 1},
-            "cross_zoom": {"color": "#ff0000"},
-            "text_item": "#ffffff",
-            "line_t": {"color": "#00ff00", "width": 1},
-            "baseline_time": {"color": "#000000", "width": 2},
-            "zone_movie": {"color": "#ffff00", "style": Qt.DashLine},
-            "scatter": {"color": "#ffffff", "width": 2},
-        },
-    },
-    "light": {
-        "window": "#f2f2f2",
-        "background": "#ffffff",
-        "menu_background": "#e5e5e5",
-        "text": "#1e1e1e",
-        "button_text": "#ffffff",
-        "accent": "#0066cc",
-        "accent_hover": "#005bb5",
-        "accent_pressed": "#004c99",
-        "input_background": "#f6f6f6",
-        "selection": "#ffb347",
-        "selection_text": "#1e1e1e",
-        "plot_background": "#f7f7f7",
-        "axis_pen": "#1e1e1e",
-        "grid_alpha": 0.25,
-        "pens": {
-            "spectrum_data": {"color": "#0c2340"},
-            "spectrum_fit": {"color": "#1e8449", "width": 2},
-            "spectrum_pic_brush": (220, 20, 60, 120),
-            "dy": {"color": "#7f6000"},
-            "zero_line": {"color": "#555555"},
-            "baseline_brut": {"color": "#1e1e1e"},
-            "baseline_fit": {"color": "#1b4f72"},
-            "fft": {"color": "#884ea0"},
-            "zoom_data": {"color": "#1e1e1e"},
-            "zoom_data_brut": {"color": "#5d6d7e"},
-            "zoom_pic_brush": (220, 20, 60, 80),
-            "selection_line": {"color": "#1e8449", "width": 1},
-            "cross_zoom": {"color": "#c0392b"},
-            "text_item": "#1e1e1e",
-            "line_t": {"color": "#1e8449", "width": 1},
-            "baseline_time": {"color": "#555555", "width": 2},
-            "zone_movie": {"color": "#d68910", "style": Qt.DashLine},
-            "scatter": {"color": "#1e1e1e", "width": 2},
-        },
-    },
-}
 
 Setup_mode = False
 
@@ -319,8 +246,6 @@ folder_CEDd=r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"#r"C:\Users\dDAC-LHPS\Desktop
 from Bibli_python import CL_FD_Update as CL
 
 from Bibli_python import Oscilloscope_LeCroy_vLABO as Oscilo
-
-
 
 def plot_clear(plot):
     try:
@@ -500,13 +425,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # --- Construction des différentes sections UI ---
-        self._setup_commande_box()       # (0, 0)
         self._setup_file_box()           # (4, 0) -> file_spectro/oscilo/movie
         self._setup_tools_tabs()         # (0, 1)
-        self._setup_param_pic_box()      # (1, 1)
         self._setup_spectrum_box()       # (0, 2)
         self._setup_ddac_box()           # (0, 3)
-        self._setup_tools_checks()       # (3, 2)
         self._setup_file_gestion()       # (2, 0)
         self._setup_python_kernel()      # (2, 2)
         self._setup_gauge_info()         # (1, 2)
@@ -567,30 +489,42 @@ class MainWindow(QMainWindow):
             return ""
 
     def _apply_plot_item_theme(self, plot_item, theme):
+        """Applique le thème à un objet PyQtGraph :
+        - GraphicsLayoutWidget
+        - PlotItem
+        - ViewBox
+        """
         if plot_item is None:
             return
 
-        viewbox = None
+        # 1) GraphicsLayoutWidget (pg.GraphicsLayoutWidget)
+        if isinstance(plot_item, pg.GraphicsLayoutWidget):
+            plot_item.setBackground(theme["plot_background"])
+            return
 
-        if hasattr(plot_item, "getViewBox"):
-            viewbox = plot_item.getViewBox()
-        elif hasattr(plot_item, "setBackgroundColor"):
-            viewbox = plot_item
+        # 2) ViewBox direct (ex: self.pg_text)
+        if isinstance(plot_item, pg.ViewBox):
+            # ViewBox possède bien setBackgroundColor
+            plot_item.setBackgroundColor(theme["plot_background"])
+            return
 
-        if viewbox is not None:
-            viewbox.setBackgroundColor(theme["plot_background"])
+        # 3) PlotItem classique
+        # (pg.PlotItem, ce que renvoie addPlot)
+        vb = plot_item.getViewBox()
+        if vb is not None and hasattr(vb, "setBackgroundColor"):
+            vb.setBackgroundColor(theme["plot_background"])
 
-        if hasattr(plot_item, "getAxis"):
-            axis_pen = self._mk_pen(theme["axis_pen"])
-            text_pen = self._mk_pen(theme["text"])
-            for name in ("bottom", "left", "right", "top"):
-                axis = plot_item.getAxis(name)
-                if axis is not None:
-                    axis.setPen(axis_pen)
-                    axis.setTextPen(text_pen)
+        axis_pen = self._mk_pen(theme["axis_pen"])
+        text_pen = self._mk_pen(theme["text"])
 
-        if hasattr(plot_item, "showGrid"):
-            plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
+        for name in ("bottom", "left", "right", "top"):
+            axis = plot_item.getAxis(name)
+            if axis is not None:
+                axis.setPen(axis_pen)
+                axis.setTextPen(text_pen)
+
+        plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
+
 
     def _apply_theme(self, theme_name: str):
         theme = self._get_theme(theme_name)
@@ -667,8 +601,8 @@ class MainWindow(QMainWindow):
                 scatter.setPen(scatter_pen)
 
         if hasattr(self, "pg_text"):
-            self._apply_plot_item_theme(self.pg_text, theme)
-            self.pg_text.setBackgroundColor(theme["plot_background"])
+             self._apply_plot_item_theme(self.pg_text, theme)
+
 
     def _toggle_theme(self, checked: bool):
         self._apply_theme("light" if checked else "dark")
@@ -805,11 +739,276 @@ class MainWindow(QMainWindow):
         self.grid_layout.setRowStretch(2, 2)
 
     # ==================================================================
-    # ===============   SECTION : HELP / COMMANDES (0,0)  ==============
+    # ===============   SECTION : FILE LOADING (4,0 -> 4,3) ============
     # ==================================================================
-    def _setup_commande_box(self):
-        self.CommandeBox = QGroupBox("Help and Commande")
-        self.CommandeLayout = QVBoxLayout()
+    def _setup_file_box(self):
+        # Chemins de base
+        file_spectro = os.path.join(self.folder_start, "Aquisition_ANDOR_Banc_CEDd")
+        file_oscilo = os.path.join(self.folder_start, "Aquisition_LECROY_Banc_CEDd")
+        file_movie = os.path.join(self.folder_start, "Aquisition_PHANTOME_Banc_CEDd")
+
+        FileBox = QGroupBox("File loading")
+        FileBoxLayout = QHBoxLayout()
+
+        # Spectro
+        self.select_file_spectro_button = QPushButton("Spectrum File", self)
+        self.select_file_spectro_button.clicked.connect(self.select_spectro_file)
+        FileBoxLayout.addWidget(self.select_file_spectro_button)
+
+        self.dir_label_spectro = QLabel("No file spectro", self)
+        FileBoxLayout.addWidget(self.dir_label_spectro)
+        self.loaded_filename_spectro = file_spectro
+
+        # Oscilo
+        self.select_file_oscilo_button = QPushButton("Oscillo File", self)
+        self.select_file_oscilo_button.clicked.connect(self.select_oscilo_file)
+        FileBoxLayout.addWidget(self.select_file_oscilo_button)
+
+        self.dir_label_oscilo = QLabel("No file oscilo", self)
+        FileBoxLayout.addWidget(self.dir_label_oscilo)
+        self.loaded_filename_oscilo = file_oscilo
+
+        # Movie
+        self.select_file_movie_button = QPushButton("Movie File", self)
+        self.select_file_movie_button.clicked.connect(self.select_movie_file)
+        FileBoxLayout.addWidget(self.select_file_movie_button)
+
+        self.dir_label_movie = QLabel("No file movie", self)
+        FileBoxLayout.addWidget(self.dir_label_movie)
+        self.loaded_filename_movie = file_movie
+
+        # Bouton "Load latest"
+        self.load_latest_button = QPushButton("Load Latest File", self)
+        self.load_latest_button.clicked.connect(self.load_latest_file)
+        FileBoxLayout.addWidget(self.load_latest_button)
+
+        FileBox.setLayout(FileBoxLayout)
+        self.grid_layout.addWidget(FileBox, 3, 3, 1, 1)
+
+    # ==================================================================
+    # ===============   SECTION : TOOLS TABS (0,0)  ====================
+    # ==================================================================
+    def _setup_tools_tabs(self):
+        ParamBox = QGroupBox("Tools")
+        ParamBoxLayout = QVBoxLayout()
+
+        self.theme_toggle_button = QPushButton("Dark mode")
+        self.theme_toggle_button.setCheckable(True)
+        self.theme_toggle_button.setChecked(False)
+        self.theme_toggle_button.toggled.connect(self._toggle_theme)
+        ParamBoxLayout.addWidget(self.theme_toggle_button)
+
+        
+
+        # ---- Tabs ----
+        self.tools_tabs = QTabWidget()
+        self.tools_tabs.setTabPosition(QTabWidget.West)
+
+        self._setup_tab_gauge()
+        self._setup_tab_fit()
+        self._setup_tab_data_treatment()
+        self._setup_tab_help_and_commande()
+        self._setup_tab_tools_checks()
+
+        ParamBoxLayout.addWidget(self.tools_tabs)
+        ParamBox.setLayout(ParamBoxLayout)
+        self.grid_layout.addWidget(ParamBox, 0, 0, 2, 1)
+    
+    def _setup_tab_data_treatment(self):
+        self.tab_data = QWidget()
+        layout = QVBoxLayout(self.tab_data)
+
+        
+
+        # ===== Sous-section Baseline =====
+        title = QLabel("Baseline")
+        layout.addWidget(title)
+        self.deg_baseline_entry = QSpinBox()
+        self.deg_baseline_entry.valueChanged.connect(self.setFocus)
+        self.deg_baseline_entry.setRange(0, 10)
+        self.deg_baseline_entry.setSingleStep(1)
+        self.deg_baseline_entry.setValue(0)
+        layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
+        
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        # ===== Sous-section Filtre =====
+        title = QLabel("Filtre")
+        layout.addWidget(title)
+        self.filtre_type_selector = QComboBox(self)
+        liste_type_filtre = ['svg', 'fft', 'No filtre']
+        self.filtre_type_selector.addItems(liste_type_filtre)
+        filtre_colors = ['darkblue', 'darkred', 'darkgrey']
+        for ind, col in enumerate(filtre_colors):
+            self.filtre_type_selector.model().item(ind).setBackground(QColor(col))
+        self.filtre_type_selector.currentIndexChanged.connect(self.f_filtre_select)
+        layout.addLayout(creat_spin_label(self.filtre_type_selector, "Filtre:"))
+
+        layh1 = QHBoxLayout()
+        self.param_filtre_1_name = QLabel("")
+        layh1.addWidget(self.param_filtre_1_name)
+        self.param_filtre_1_entry = QLineEdit()
+        self.param_filtre_1_entry.setText("10")
+        layh1.addWidget(self.param_filtre_1_entry)
+        layout.addLayout(layh1)
+
+        layh2 = QHBoxLayout()
+        self.param_filtre_2_name = QLabel("")
+        layh2.addWidget(self.param_filtre_2_name)
+        self.param_filtre_2_entry = QLineEdit()
+        self.param_filtre_2_entry.setText("1")
+        layh2.addWidget(self.param_filtre_2_entry)
+        layout.addLayout(layh2)
+        
+        self.f_filtre_select()
+
+        self.tools_tabs.addTab(self.tab_data, "Spectrum")
+
+    def _setup_tab_gauge(self):
+        # === Onglet Gauge ===
+        self.tab_gauge = QWidget()
+        layout = QVBoxLayout(self.tab_gauge)
+
+        # --- Partie "Gauge" ---
+        title = QLabel("Gauge")
+        layout.addWidget(title)
+
+        layh3 = QHBoxLayout()
+        self.name_gauge = QLabel("ADD:")
+        layh3.addWidget(self.name_gauge)
+
+        self.Gauge_type_selector = QComboBox(self)
+        self.liste_type_Gauge = ['Ruby', 'Sm', 'SrFCl', 'Rhodamine6G', 'Diamond_c12', 'Diamond_c13']
+        self.Gauge_type_selector.addItems(self.liste_type_Gauge)
+        self.gauge_colors = ['darkred', 'darkblue', 'darkorange', 'limegreen', 'silver', "dimgrey", "k"]
+        for ind, col in enumerate(self.gauge_colors[:len(self.liste_type_Gauge)]):
+            self.Gauge_type_selector.model().item(ind).setBackground(QColor(col))
+        self.Gauge_type_selector.currentIndexChanged.connect(self.f_gauge_select)
+
+        layh3.addWidget(self.Gauge_type_selector)
+        layout.addLayout(layh3)
+
+        self.lamb0_entry = QLineEdit()
+        layout.addLayout(creat_spin_label(self.lamb0_entry, "\u03BB<sub>0</sub>:"))
+
+        self.name_spe_entry = QLineEdit()
+        self.name_spe_entry.editingFinished.connect(self.f_name_spe)
+        layout.addLayout(creat_spin_label(self.name_spe_entry, "G.spe:"))
+
+ 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        # --- Partie "Model peak" dans le même onglet ---
+        
+        title = QLabel("Peak")
+        layout.addWidget(title)
+        self.ParampicLayout = QVBoxLayout()
+
+        # Combobox type de pic
+        self.coef_dynamic_spinbox, self.coef_dynamic_label = [], []
+
+        self.model_pic_type_selector = QComboBox(self)
+        self.liste_type_model_pic = ['PseudoVoigt', 'Moffat', 'SplitLorentzian', 'PearsonIV', 'Gaussian']
+        self.model_pic_type_selector.addItems(self.liste_type_model_pic)
+        model_colors = ['darkblue', 'darkred', 'darkgreen', 'darkorange', 'darkmagenta']
+        for ind, col in enumerate(model_colors):
+            self.model_pic_type_selector.model().item(ind).setBackground(QColor(col))
+        self.model_pic_type_selector.currentIndexChanged.connect(self.f_model_pic_type)
+
+        self.ParampicLayout.addWidget(self.model_pic_type_selector)
+
+        # Spin σ
+        self.spinbox_sigma = QDoubleSpinBox()
+        self.spinbox_sigma.valueChanged.connect(self.setFocus)
+        self.spinbox_sigma.setRange(0.01, 80)
+        self.spinbox_sigma.setSingleStep(0.01)
+        self.spinbox_sigma.setValue(0.25)
+        self.ParampicLayout.addLayout(creat_spin_label(self.spinbox_sigma, "\u03C3 :"))
+
+        # Ajout du groupbox "Model peak" dans le même tab
+        layout.addLayout(self.ParampicLayout)
+
+        # Initialisation des coefficients dynamiques du modèle
+        self.bit_bypass = True
+        self.f_model_pic_type()   # va utiliser self.ParampicLayout, self.model_pic_type_selector, etc.
+        self.bit_bypass = False
+
+        # Enfin : ajout de l’onglet dans le QTabWidget
+        self.tools_tabs.addTab(self.tab_gauge, "Gauge & Peak")
+
+    def _setup_tab_fit(self):
+        self.tab_fit = QWidget()
+        layout = QVBoxLayout(self.tab_fit)
+
+        name = QLabel("fit param")
+        layout.addWidget(name)
+
+        self.spinbox_cycle = QSpinBox()
+        self.spinbox_cycle.valueChanged.connect(self.setFocus)
+        self.spinbox_cycle.setRange(0, 10)
+        self.spinbox_cycle.setSingleStep(1)
+        self.spinbox_cycle.setValue(1)
+        layout.addLayout(creat_spin_label(self.spinbox_cycle, "nb<sub>cycle</sub> (Y):"))
+
+        self.sigma_pic_fit_entry = QSpinBox()
+        self.sigma_pic_fit_entry.valueChanged.connect(self.setFocus)
+        self.sigma_pic_fit_entry.setRange(1, 20)
+        self.sigma_pic_fit_entry.setSingleStep(1)
+        self.sigma_pic_fit_entry.setValue(5)
+        layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nb \u03C3 (R)"))
+
+        self.inter_entry = QDoubleSpinBox()
+        self.inter_entry.valueChanged.connect(self.setFocus)
+        self.inter_entry.setRange(0.1, 5)
+        self.inter_entry.setSingleStep(0.1)
+        self.inter_entry.setValue(1)
+        layout.addLayout(creat_spin_label(self.inter_entry, "% variation fit"))
+
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        name = QLabel("Multi fit")
+        layout.addWidget(name)
+
+        self.add_btn = QPushButton("Ajouter une zone")
+        self.add_btn.clicked.connect(self.add_zone)
+        layout.addWidget(self.add_btn)
+
+        self.remove_btn = QPushButton("Supprimer la zone sélectionnée")
+        self.remove_btn.clicked.connect(self.dell_zone)
+        self.remove_btn.setEnabled(False)
+        layout.addWidget(self.remove_btn)
+
+        self.index_start_entry = QSpinBox()
+        self.index_start_entry.setRange(0, 2000)
+        self.index_start_entry.setValue(1)
+        layout.addLayout(creat_spin_label(self.index_start_entry, "Index start"))
+
+        self.index_stop_entry = QSpinBox()
+        self.index_stop_entry.setRange(0, 2000)
+        self.index_stop_entry.setValue(10)
+        layout.addLayout(creat_spin_label(self.index_stop_entry, "Index stop"))
+
+        self.multi_fit_button = QPushButton("Launch multi fit")
+        self.multi_fit_button.clicked.connect(self._CED_multi_fit)
+        layout.addWidget(self.multi_fit_button)
+
+
+        self.tools_tabs.addTab(self.tab_fit, "Fit")
+
+
+    def _setup_tab_help_and_commande(self):
+        self.tab_help_and_commande = QWidget()
+        self.CommandeLayout = QVBoxLayout(self.tab_help_and_commande)
 
         # Liste d’aide (file_help)
         self.helpLabel = QListWidget()
@@ -897,285 +1096,44 @@ class MainWindow(QMainWindow):
         self.ButtonClearcode.clicked.connect(self.code_clear)
         self.CommandeLayout.addWidget(self.ButtonClearcode)
 
-        self.CommandeBox.setLayout(self.CommandeLayout)
-        self.grid_layout.addWidget(self.CommandeBox, 0, 0, 1, 1)
-
-    # ==================================================================
-    # ===============   SECTION : FILE LOADING (4,0 -> 4,3) ============
-    # ==================================================================
-    def _setup_file_box(self):
-        # Chemins de base
-        file_spectro = os.path.join(self.folder_start, "Aquisition_ANDOR_Banc_CEDd")
-        file_oscilo = os.path.join(self.folder_start, "Aquisition_LECROY_Banc_CEDd")
-        file_movie = os.path.join(self.folder_start, "Aquisition_PHANTOME_Banc_CEDd")
-
-        FileBox = QGroupBox("File loading")
-        FileBoxLayout = QHBoxLayout()
-
-        # Spectro
-        self.select_file_spectro_button = QPushButton("Select file_spectro", self)
-        self.select_file_spectro_button.clicked.connect(self.select_spectro_file)
-        FileBoxLayout.addWidget(self.select_file_spectro_button)
-
-        self.dir_label_spectro = QLabel("No file spectro selected", self)
-        FileBoxLayout.addWidget(self.dir_label_spectro)
-        self.loaded_filename_spectro = file_spectro
-
-        # Oscilo
-        self.select_file_oscilo_button = QPushButton("Select file_oscilo", self)
-        self.select_file_oscilo_button.clicked.connect(self.select_oscilo_file)
-        FileBoxLayout.addWidget(self.select_file_oscilo_button)
-
-        self.dir_label_oscilo = QLabel("No file oscilo selected", self)
-        FileBoxLayout.addWidget(self.dir_label_oscilo)
-        self.loaded_filename_oscilo = file_oscilo
-
-        # Movie
-        self.select_file_movie_button = QPushButton("Select file_movie", self)
-        self.select_file_movie_button.clicked.connect(self.select_movie_file)
-        FileBoxLayout.addWidget(self.select_file_movie_button)
-
-        self.dir_label_movie = QLabel("No file movie selected", self)
-        FileBoxLayout.addWidget(self.dir_label_movie)
-        self.loaded_filename_movie = file_movie
-
-        # Bouton "Load latest"
-        self.load_latest_button = QPushButton("Load Latest File", self)
-        self.load_latest_button.clicked.connect(self.load_latest_file)
-        FileBoxLayout.addWidget(self.load_latest_button)
-
-        FileBox.setLayout(FileBoxLayout)
-        self.grid_layout.addWidget(FileBox, 4, 0, 1, 4)
-
-    # ==================================================================
-    # ===============   SECTION : TOOLS TABS (0,1)  ====================
-    # ==================================================================
-    def _setup_tools_tabs(self):
-        ParamBox = QGroupBox("Tools")
-        ParamBoxLayout = QVBoxLayout()
-
-        self.theme_toggle_button = QPushButton("Dark mode")
-        self.theme_toggle_button.setCheckable(True)
-        self.theme_toggle_button.setChecked(False)
-        self.theme_toggle_button.toggled.connect(self._toggle_theme)
-        ParamBoxLayout.addWidget(self.theme_toggle_button)
-
         # ---- Bouton pour le kernel Python ----
         self.python_kernel_button = QPushButton("Show Python Kernel")
         self.python_kernel_button.setCheckable(True)
         self.python_kernel_button.setChecked(False)
         self.python_kernel_button.toggled.connect(self.toggle_python_kernel)
-        ParamBoxLayout.addWidget(self.python_kernel_button)
+        self.CommandeLayout.addWidget(self.python_kernel_button)
 
-        # ---- Tabs ----
-        self.tools_tabs = QTabWidget()
-        self.tools_tabs.setTabPosition(QTabWidget.West)
+        self.tools_tabs.addTab(self.tab_help_and_commande, "Help & Commande")
+        #self.grid_layout.addWidget(self.CommandeBox, 0, 0, 1, 1)
 
-        self._setup_tab_data_treatment()   # <<<< Nouveau au lieu de baseline+filtre
-        self._setup_tab_gauge()
-        self._setup_tab_fit()
-        self._setup_tab_fit_selection()
+    def _setup_tab_tools_checks(self):
+        self.tab_tools_checks= QWidget()
 
-        ParamBoxLayout.addWidget(self.tools_tabs)
-        ParamBox.setLayout(ParamBoxLayout)
-        self.grid_layout.addWidget(ParamBox, 0, 1, 1, 1)
-    
-    def _setup_tab_data_treatment(self):
-        self.tab_data = QWidget()
-        layout = QVBoxLayout(self.tab_data)
+        layout_boutons = QVBoxLayout(self.tab_tools_checks)
 
-        title = QLabel("Data treatment section - - -")
-        layout.addWidget(title)
+        self.fit_start_box = QCheckBox("Fit (f)", self)
+        self.fit_start_box.setChecked(True)
+        self.fit_start_box.stateChanged.connect(self.Print_fit_start)
+        layout_boutons.addWidget(self.fit_start_box)
 
-        # ===== Sous-section Baseline =====
-        baseline_group = QGroupBox("Baseline")
-        bl_layout = QVBoxLayout()
+        self.var_bouton = []
+        for i, valeur in enumerate(self.variables.valeurs_boutons):
+            var = QCheckBox(self.variables.name_boutons[i], self)
+            var.setChecked(valeur)
+            var.stateChanged.connect(self.Update_Print)
+            self.var_bouton.append(var)
+            layout_boutons.addWidget(var)
 
-        name_bl = QLabel("baseline section - - -")
-        bl_layout.addWidget(name_bl)
+        self.tools_tabs.addTab(self.tab_tools_checks, "Tools & Check")
 
-        self.deg_baseline_entry = QSpinBox()
-        self.deg_baseline_entry.valueChanged.connect(self.setFocus)
-        self.deg_baseline_entry.setRange(0, 10)
-        self.deg_baseline_entry.setSingleStep(1)
-        self.deg_baseline_entry.setValue(0)
-        bl_layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
-
-        baseline_group.setLayout(bl_layout)
-        layout.addWidget(baseline_group)
-
-        # ===== Sous-section Filtre =====
-        filtre_group = QGroupBox("Filtre")
-        f_layout = QVBoxLayout()
-
-        name_f = QLabel("filtre data section - - -")
-        f_layout.addWidget(name_f)
-
-        self.filtre_type_selector = QComboBox(self)
-        liste_type_filtre = ['svg', 'fft', 'No filtre']
-        self.filtre_type_selector.addItems(liste_type_filtre)
-        filtre_colors = ['darkblue', 'darkred', 'darkgrey']
-        for ind, col in enumerate(filtre_colors):
-            self.filtre_type_selector.model().item(ind).setBackground(QColor(col))
-        self.filtre_type_selector.currentIndexChanged.connect(self.f_filtre_select)
-        f_layout.addLayout(creat_spin_label(self.filtre_type_selector, "Filtre:"))
-
-        layh1 = QHBoxLayout()
-        self.param_filtre_1_name = QLabel("")
-        layh1.addWidget(self.param_filtre_1_name)
-        self.param_filtre_1_entry = QLineEdit()
-        self.param_filtre_1_entry.setText("10")
-        layh1.addWidget(self.param_filtre_1_entry)
-        f_layout.addLayout(layh1)
-
-        layh2 = QHBoxLayout()
-        self.param_filtre_2_name = QLabel("")
-        layh2.addWidget(self.param_filtre_2_name)
-        self.param_filtre_2_entry = QLineEdit()
-        self.param_filtre_2_entry.setText("1")
-        layh2.addWidget(self.param_filtre_2_entry)
-        f_layout.addLayout(layh2)
-
-        self.f_filtre_select()
-
-        filtre_group.setLayout(f_layout)
-        layout.addWidget(filtre_group)
-
-        layout.addStretch()
-
-        self.tools_tabs.addTab(self.tab_data, "Data\nTreatment")
-
-    def _setup_tab_gauge(self):
-        self.tab_gauge = QWidget()
-        layout = QVBoxLayout(self.tab_gauge)
-
-        name = QLabel("Gauge section - - -")
-        layout.addWidget(name)
-
-        layh3 = QHBoxLayout()
-        self.name_gauge = QLabel("ADD:")
-        layh3.addWidget(self.name_gauge)
-
-        self.Gauge_type_selector = QComboBox(self)
-        self.liste_type_Gauge = ['Ruby', 'Sm', 'SrFCl', 'Rhodamine6G', 'Diamond_c12', 'Diamond_c13']
-        self.Gauge_type_selector.addItems(self.liste_type_Gauge)
-        self.gauge_colors = ['darkred', 'darkblue', 'darkorange', 'limegreen', 'silver', "dimgrey", "k"]
-        for ind, col in enumerate(self.gauge_colors[:len(self.liste_type_Gauge)]):
-            self.Gauge_type_selector.model().item(ind).setBackground(QColor(col))
-        self.Gauge_type_selector.currentIndexChanged.connect(self.f_gauge_select)
-
-        layh3.addWidget(self.Gauge_type_selector)
-        layout.addLayout(layh3)
-
-        self.lamb0_entry = QLineEdit()
-        layout.addLayout(creat_spin_label(self.lamb0_entry, "\u03BB<sub>0</sub>:"))
-
-        self.name_spe_entry = QLineEdit()
-        self.name_spe_entry.editingFinished.connect(self.f_name_spe)
-        layout.addLayout(creat_spin_label(self.name_spe_entry, "G.spe:"))
-
-        self.tools_tabs.addTab(self.tab_gauge, "Gauge")
-
-    def _setup_tab_fit(self):
-        self.tab_fit = QWidget()
-        layout = QVBoxLayout(self.tab_fit)
-
-        name = QLabel("fit param section - - -")
-        layout.addWidget(name)
-
-        self.spinbox_cycle = QSpinBox()
-        self.spinbox_cycle.valueChanged.connect(self.setFocus)
-        self.spinbox_cycle.setRange(0, 10)
-        self.spinbox_cycle.setSingleStep(1)
-        self.spinbox_cycle.setValue(1)
-        layout.addLayout(creat_spin_label(self.spinbox_cycle, "nb<sub>cycle</sub> (Y):"))
-
-        self.sigma_pic_fit_entry = QSpinBox()
-        self.sigma_pic_fit_entry.valueChanged.connect(self.setFocus)
-        self.sigma_pic_fit_entry.setRange(1, 20)
-        self.sigma_pic_fit_entry.setSingleStep(1)
-        self.sigma_pic_fit_entry.setValue(5)
-        layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nb \u03C3 (R)"))
-
-        self.inter_entry = QDoubleSpinBox()
-        self.inter_entry.valueChanged.connect(self.setFocus)
-        self.inter_entry.setRange(0.1, 5)
-        self.inter_entry.setSingleStep(0.1)
-        self.inter_entry.setValue(1)
-        layout.addLayout(creat_spin_label(self.inter_entry, "% variation fit"))
-
-        self.tools_tabs.addTab(self.tab_fit, "Fit")
-
-    def _setup_tab_fit_selection(self):
-        self.tab_fit_selection = QWidget()
-        layout = QVBoxLayout(self.tab_fit_selection)
-
-        name = QLabel("fit_selected_spectra section - - -")
-        layout.addWidget(name)
-
-        self.add_btn = QPushButton("Ajouter une zone")
-        self.add_btn.clicked.connect(self.add_zone)
-        layout.addWidget(self.add_btn)
-
-        self.remove_btn = QPushButton("Supprimer la zone sélectionnée")
-        self.remove_btn.clicked.connect(self.dell_zone)
-        self.remove_btn.setEnabled(False)
-        layout.addWidget(self.remove_btn)
-
-        self.index_start_entry = QSpinBox()
-        self.index_start_entry.setRange(0, 2000)
-        self.index_start_entry.setValue(1)
-        layout.addLayout(creat_spin_label(self.index_start_entry, "Index start"))
-
-        self.index_stop_entry = QSpinBox()
-        self.index_stop_entry.setRange(0, 2000)
-        self.index_stop_entry.setValue(10)
-        layout.addLayout(creat_spin_label(self.index_stop_entry, "Index stop"))
-
-        self.multi_fit_button = QPushButton("Multi fit")
-        self.multi_fit_button.clicked.connect(self._CED_multi_fit)
-        layout.addWidget(self.multi_fit_button)
-
-        self.tools_tabs.addTab(self.tab_fit_selection, "Fit selection")
+        
 
     # ==================================================================
     # ===============   SECTION : TEXT BOX MSG (1,0)  ==================
     # ==================================================================
     def _setup_text_box_msg(self):
         self.text_box_msg = QLabel("Good Luck and Have Fun")
-        self.grid_layout.addWidget(self.text_box_msg, 1, 0, 1, 1)
-
-    # ==================================================================
-    # ===============   SECTION : PARAM PEAK MODEL (1,1)  ==============
-    # ==================================================================
-    def _setup_param_pic_box(self):
-        ParampicBox = QGroupBox("Model peak")
-        self.ParampicLayout = QVBoxLayout()
-
-        self.coef_dynamic_spinbox, self.coef_dynamic_label = [], []
-
-        self.model_pic_type_selector = QComboBox(self)
-        self.liste_type_model_pic = ['PseudoVoigt', 'Moffat', 'SplitLorentzian', 'PearsonIV', 'Gaussian']
-        self.model_pic_type_selector.addItems(self.liste_type_model_pic)
-        model_colors = ['darkblue', 'darkred', 'darkgreen', 'darkorange', 'darkmagenta']
-        for ind, col in enumerate(model_colors):
-            self.model_pic_type_selector.model().item(ind).setBackground(QColor(col))
-        self.model_pic_type_selector.currentIndexChanged.connect(self.f_model_pic_type)
-        self.ParampicLayout.addWidget(self.model_pic_type_selector)
-
-        self.spinbox_sigma = QDoubleSpinBox()
-        self.spinbox_sigma.valueChanged.connect(self.setFocus)
-        self.spinbox_sigma.setRange(0.01, 80)
-        self.spinbox_sigma.setSingleStep(0.01)
-        self.spinbox_sigma.setValue(0.25)
-        self.ParampicLayout.addLayout(creat_spin_label(self.spinbox_sigma, "\u03C3 :"))
-
-        ParampicBox.setLayout(self.ParampicLayout)
-        self.grid_layout.addWidget(ParampicBox, 1, 1, 1, 1)
-
-        self.bit_bypass = True
-        self.f_model_pic_type()
-        self.bit_bypass = False
+        self.grid_layout.addWidget(self.text_box_msg, 3, 2, 1, 1)
 
     # ==================================================================
     # ===============   SECTION : SPECTRUM PLOTS (0,2)  =================
@@ -1530,28 +1488,6 @@ class MainWindow(QMainWindow):
             row_factors=self._ddac_row_factors,
             col_factors=self._ddac_col_factors,
         )
-    # ==================================================================
-    # ===============   SECTION : TOOLS CHECKS (3,2)  ==================
-    # ==================================================================
-    def _setup_tools_checks(self):
-        group_boutons = QGroupBox("Check")
-        layout_boutons = QHBoxLayout()
-
-        self.fit_start_box = QCheckBox("Fit (f)", self)
-        self.fit_start_box.setChecked(True)
-        self.fit_start_box.stateChanged.connect(self.Print_fit_start)
-        layout_boutons.addWidget(self.fit_start_box)
-
-        self.var_bouton = []
-        for i, valeur in enumerate(self.variables.valeurs_boutons):
-            var = QCheckBox(self.variables.name_boutons[i], self)
-            var.setChecked(valeur)
-            var.stateChanged.connect(self.Update_Print)
-            self.var_bouton.append(var)
-            layout_boutons.addWidget(var)
-
-        group_boutons.setLayout(layout_boutons)
-        self.grid_layout.addWidget(group_boutons, 3, 2, 1, 2)
 
     # ==================================================================
     # ===============   SECTION : FILE GESTION (2,0)  ==================
@@ -1588,6 +1524,11 @@ class MainWindow(QMainWindow):
         self.liste_objets_widget = QListWidget(self)
         self.liste_objets_widget.itemDoubleClicked.connect(self.SELECT_CEDd)
         layout_fichiers.addWidget(self.liste_objets_widget)
+
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search...")
+        self.search_bar.textChanged.connect(self.f_filter_files)
+        layout_fichiers.addWidget(self.search_bar)
 
         group_fichiers.setLayout(layout_fichiers)
         self.grid_layout.addWidget(group_fichiers, 2, 0, 2, 2)
@@ -2847,6 +2788,13 @@ class MainWindow(QMainWindow):
         self.loaded_filename_oscilo=self.f_load_latest_file(os.path.join(self.folder_start,"Aquisition_LECROY_Banc_CEDd"),None,self.loaded_filename_oscilo,self.dir_label_oscilo)
         self.loaded_filename_movie=self.f_load_latest_file(os.path.join(self.folder_start,"Aquisition_PHANTOME_Banc_CEDd"),".cine",self.loaded_filename_movie,self.dir_label_movie)
         #self.loaded_filename_movie=self.f_load_latest_file(os.path.join(folder_start,"Fichier_CED"),".CLUpdate",self.loaded_filename_movie,self.dir_label_movie)
+
+    def f_filter_files(self):
+        filter_text = self.search_bar.text().lower()
+        filtered_files = [f.lower() for f in self.variables.liste_chemins_fichiers  if filter_text in f.lower()]
+        self.liste_fichiers.clear()
+        self.liste_fichiers.addItems(filtered_files)
+
 #########################################################################################################################################################################################
 #? COMMANDE PRINT
     def f_dell_lines(self):
@@ -4100,68 +4048,103 @@ class MainWindow(QMainWindow):
     def LOAD_Spectrum(self, item=None, Spectrum=None):
         """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
         save_index_spec = -1
-        nb_j_old = len(self.Spectrum.Gauges) if self.Spectrum is not None else 0
+        old_spectrum = self.Spectrum
+        nb_j_old = len(old_spectrum.Gauges) if old_spectrum is not None else 0
 
         self._clear_selected_peak_overlay()
+        bypass = False  # valeur par défaut
 
+        # =========================
+        # 1) Sélection de Spectrum
+        # =========================
         if Spectrum is None:
-            # On vient de l'UI (listbox)
-            if not self.bit_bypass:
+            # On vient de l'UI (spinner / listbox)
+            if not self.bit_bypass and old_spectrum is not None:
+                # On sauvegarde le spectre courant dans le RUN (si possible)
                 try:
-                    self.RUN.Spectra[self.index_spec] = self.Spectrum
+                    self.RUN.Spectra[self.index_spec] = old_spectrum
                 except Exception:
                     self.text_box_msg.setText("ERROR Load Spec")
                     return
-                save_index_spec = self.listbox_Spec.currentRow()
 
-            if save_index_spec != -1 or save_index_spec != self.index_spec:
-                bypass = False
+                save_index_spec = self.spinbox_spec_index.value()
+
+            # Choix de l'index de spectre cible
+            if save_index_spec >= 0:
+                target_index = save_index_spec
+            else:
+                target_index = self.index_spec
+
+            # Si on change réellement de spectre
+            if target_index != self.index_spec:
                 if not self.bit_bypass:
-                    self.index_spec = save_index_spec
-                if self.RUN.Spectra[self.index_spec].bit_fit:
-                    self.Spectrum = self.RUN.Spectra[self.index_spec]
-                elif self.Spectrum.bit_fit:
-                    save_J = copy.deepcopy(self.RUN.Spectra[self.index_spec].Gauges)
-                    save_M = copy.deepcopy(self.RUN.Spectra[self.index_spec].model)
-                    self.Spectrum = copy.deepcopy(self.RUN.Spectra[self.index_spec])
-                    self.Spectrum.Gauges = save_J
-                    self.Spectrum.model = save_M
-                    bypass = True
-                else:
-                    self.Spectrum = copy.deepcopy(self.RUN.Spectra[self.index_spec])
+                    self.index_spec = target_index
+
+            # Nouveau spectre de référence
+            try:
+                new_spec = self.RUN.Spectra[self.index_spec]
+            except (AttributeError, IndexError, TypeError):
+                self.text_box_msg.setText("ERROR: invalid spectrum index")
+                return
+
+            new_has_fit = getattr(new_spec, "bit_fit", False)
+            old_has_fit = getattr(old_spectrum, "bit_fit", False) if old_spectrum is not None else False
+
+            if new_has_fit:
+                # On prend directement le spectre du RUN (déjà fitté)
+                self.Spectrum = new_spec
+            elif old_has_fit:
+                # On garde les paramètres de fit de l'ancien, mais on remplace jauges/modèle
+                save_J = copy.deepcopy(new_spec.Gauges)
+                save_M = copy.deepcopy(new_spec.model)
+                self.Spectrum = copy.deepcopy(old_spectrum)
+                self.Spectrum.Gauges = save_J
+                self.Spectrum.model = save_M
+                bypass = True
+            else:
+                # Pas de fit ni dans l'ancien, ni dans le nouveau : simple copie
+                self.Spectrum = copy.deepcopy(new_spec)
+
         else:
             # Chargement direct d'un objet Spectre
             self.Spectrum = Spectrum
             bypass = True
             self.bit_bypass = False
 
-        # Réinitialise toute la structure de fit (Param0, Nom_pic, etc.)
-        if (
-            self.Spectrum.bit_fit
-            or bypass
-            or self.bit_bypass
-            or any(G.bit_fit for G in self.Spectrum.Gauges)
-        ):
-            nb_j = len(self.Spectrum.Gauges)
+        S = self.Spectrum
+        if S is None:
+            self.text_box_msg.setText("ERROR: no Spectrum loaded")
+            return
+
+        # =========================================
+        # 2) Réinitialise toute la structure de fit
+        # =========================================
+        has_global_fit = getattr(S, "bit_fit", False)
+        has_gauge_fit = any(getattr(G, "bit_fit", False) for G in getattr(S, "Gauges", []))
+
+        if has_global_fit or bypass or self.bit_bypass or has_gauge_fit:
+            nb_j = len(S.Gauges) if S.Gauges is not None else 0
             self.Zone_fit = [None for _ in range(nb_j)]
             self.X_s = [None for _ in range(nb_j)]
             self.X_e = [None for _ in range(nb_j)]
             self.bit_fit = [False for _ in range(nb_j)]
 
             # Gestion des zones de fit : uniquement logique (plus de remplissage Matplotlib)
-            if self.Spectrum.indexX is not None:
+            if getattr(S, "indexX", None) is not None:
                 for i in range(nb_j):
-                    self.Zone_fit[i] = self.Spectrum.Gauges[i].indexX
-                self.Zone_fit[0] = self.Spectrum.indexX
+                    self.Zone_fit[i] = S.Gauges[i].indexX
+                # La jauge 0 garde aussi la zone globale
+                self.Zone_fit[0] = S.indexX
 
             # Reconstruction du modèle global si besoin
-            if self.Spectrum.model is None and self.Spectrum.Gauges:
-                for j in range(nb_j):
-                    self.Spectrum.Gauges[j].Update_model()
+            if S.model is None and getattr(S, "Gauges", None):
+                S.model = None
+                for j, g in enumerate(S.Gauges):
+                    g.Update_model()
                     if j == 0:
-                        self.Spectrum.model = self.Spectrum.Gauges[0].model
+                        S.model = g.model
                     else:
-                        self.Spectrum.model += self.Spectrum.Gauges[j].model
+                        S.model += g.model
 
             # (re)construction des listes de pics
             self.Nom_pic = [[] for _ in range(nb_j)]
@@ -4171,52 +4154,61 @@ class MainWindow(QMainWindow):
             self.list_y_fit_start = [[] for _ in range(nb_j)]
             self.list_name_gauges = []
 
-            for i, Jg in enumerate(self.Spectrum.Gauges):
-                self.list_name_gauges.append(Jg.name)
-                for j, p in enumerate(Jg.pics):
-                    self.Nom_pic[i].append(p.name)
-                    new_P0, param = p.Out_model()
-                    self.Param0[i].append(new_P0 + [p.model_fit])
-                    new_name = (
-                        p.name
-                        + "   X0:"
-                        + str(self.Param0[i][-1][0])
-                        + "   Y0:"
-                        + str(self.Param0[i][-1][1])
-                        + "   sigma:"
-                        + str(self.Param0[i][-1][2])
-                        + "   Coef:"
-                        + str(self.Param0[i][-1][3])
-                        + " ; Modele:"
-                        + str(self.Param0[i][-1][4])
-                    )
-                    self.J[i] += 1
-                    self.list_text_pic[i].append(new_name)
-                    y_plot = p.model.eval(param, x=self.Spectrum.wnb)
-                    self.list_y_fit_start[i].append(y_plot)
+            if getattr(S, "Gauges", None):
+                for i, Jg in enumerate(S.Gauges):
+                    self.list_name_gauges.append(Jg.name)
+                    for j, p in enumerate(Jg.pics):
+                        self.Nom_pic[i].append(p.name)
+                        new_P0, param = p.Out_model()
+                        # new_P0 = [X0, Y0, sigma, coef]
+                        self.Param0[i].append(new_P0 + [p.model_fit])
+                        new_name = (
+                            p.name
+                            + "   X0:" + str(self.Param0[i][-1][0])
+                            + "   Y0:" + str(self.Param0[i][-1][1])
+                            + "   sigma:" + str(self.Param0[i][-1][2])
+                            + "   Coef:" + str(self.Param0[i][-1][3])
+                            + " ; Modele:" + str(self.Param0[i][-1][4])
+                        )
+                        self.J[i] += 1
+                        self.list_text_pic[i].append(new_name)
+                        y_plot = p.model.eval(param, x=S.wnb)
+                        self.list_y_fit_start[i].append(y_plot)
 
             # Mise à jour des infos de filtre et baseline
-            index = self.filtre_type_selector.findText(self.Spectrum.type_filtre)
-            if index != -1:
-                self.filtre_type_selector.setCurrentIndex(index)
-            self.param_filtre_1_entry.setText(str(self.Spectrum.param_f[0]))
-            self.param_filtre_2_entry.setText(str(self.Spectrum.param_f[1]))
-            self.deg_baseline_entry.setValue(self.Spectrum.deg_baseline)
+            if hasattr(self, "filtre_type_selector") and getattr(S, "type_filtre", None) is not None:
+                index = self.filtre_type_selector.findText(S.type_filtre)
+                if index != -1:
+                    self.filtre_type_selector.setCurrentIndex(index)
+
+            if getattr(S, "param_f", None) is not None and len(S.param_f) >= 2:
+                self.param_filtre_1_entry.setText(str(S.param_f[0]))
+                self.param_filtre_2_entry.setText(str(S.param_f[1]))
+
+            if hasattr(S, "deg_baseline"):
+                self.deg_baseline_entry.setValue(S.deg_baseline)
+
             self._spectrum_limits_initialized = False
             self._zoom_limits_initialized = False
-            self.Baseline_spectrum()  # -> Data_treatement + y_fit_start + refresh graph
+
+            # -> Data_treatement + y_fit_start + refresh graph
+            self.Baseline_spectrum()
 
             # Mise à jour UI jauge/pics
             self.listbox_pic.clear()
-            if self.Spectrum.Gauges:
+            if getattr(S, "Gauges", None):
                 self.index_jauge = 0
-                self.Gauge_type_selector.setCurrentIndex(
-                    self.liste_type_Gauge.index(self.list_name_gauges[self.index_jauge])
-                )
+                if self.list_name_gauges:
+                    try:
+                        idx_gauge = self.liste_type_Gauge.index(self.list_name_gauges[self.index_jauge])
+                        self.Gauge_type_selector.setCurrentIndex(idx_gauge)
+                    except ValueError:
+                        # nom inconnu → on n'impose pas l'index du combo
+                        pass
                 self.LOAD_Gauge()
             else:
                 self.index_jauge = -1
-        
+    
     def f_index_gauge(self,spec):
         l_name = [ga.name for ga in spec.Gauges]
         try:
