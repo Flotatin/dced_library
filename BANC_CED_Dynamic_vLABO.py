@@ -351,19 +351,6 @@ class EditableDelegate(QStyledItemDelegate):
         editor = QLineEdit(parent)
         return editor
 
-class Variables:
-    def __init__(self):
-        self.valeurs_boutons = [True,True, True,False,True,True,True]
-        self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
-        self.liste_chemins_fichiers = []
-        self.liste_objets = []
-        self.dossier_selectionne=folder_CEDd #r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"
-        self.Spectrum_save=None
-        self.CEDd_save=None
-        self.Gauge_select=None
-        self.data_Spectro=None
-
-
 @dataclass
 class RunViewState:
     """État graphique associé à un CEDd (remplace les listes parallèles)."""
@@ -394,7 +381,15 @@ class MainWindow(QMainWindow):
 
         # --- Variables "métier" de base ---
         self.Spectrum = None
-        self.variables = Variables()
+        self.valeurs_boutons = [True,True, True,False,True,True,True]
+        self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
+        self.liste_chemins_fichiers = []
+        self.liste_objets = []
+        self.dossier_selectionne=folder_CEDd #r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"
+        self.Spectrum_save=None
+        self.CEDd_save=None
+        self.Gauge_select=None
+        self.data_Spectro=None
         self.RUN = None
 
         # États init pour éviter les accès à des attributs non initialisés
@@ -446,7 +441,7 @@ class MainWindow(QMainWindow):
         self.current_run_id = None
 
         self.file_index_map = {}          # key = index dans self.liste_fichiers, value = run_id
-        self.variables.liste_objets = []  # liste des CEDd chargés (legacy)
+        self.liste_objets = []  # liste des CEDd chargés (legacy)
         self.index_select = -1
 
         # Initialisation logique légère
@@ -1117,8 +1112,8 @@ class MainWindow(QMainWindow):
         layout_boutons.addWidget(self.fit_start_box)
 
         self.var_bouton = []
-        for i, valeur in enumerate(self.variables.valeurs_boutons):
-            var = QCheckBox(self.variables.name_boutons[i], self)
+        for i, valeur in enumerate(self.valeurs_boutons):
+            var = QCheckBox(self.name_boutons[i], self)
             var.setChecked(valeur)
             var.stateChanged.connect(self.Update_Print)
             self.var_bouton.append(var)
@@ -1512,14 +1507,14 @@ class MainWindow(QMainWindow):
         self.liste_fichiers.itemDoubleClicked.connect(self.PRINT_CEDd)
         layout_fichiers.addWidget(self.liste_fichiers)
 
-        files_brute = os.listdir(self.variables.dossier_selectionne)
+        files_brute = os.listdir(self.dossier_selectionne)
         files = sorted(
             [f for f in files_brute],
-            key=lambda x: os.path.getctime(os.path.join(self.variables.dossier_selectionne, x)),
+            key=lambda x: os.path.getctime(os.path.join(self.dossier_selectionne, x)),
             reverse=True
         )
         self.liste_fichiers.addItems([f for f in files])
-        self.variables.liste_chemins_fichiers = [os.path.join(self.variables.dossier_selectionne, f) for f in files]
+        self.liste_chemins_fichiers = [os.path.join(self.dossier_selectionne, f) for f in files]
 
         self.liste_objets_widget = QListWidget(self)
         self.liste_objets_widget.itemDoubleClicked.connect(self.SELECT_CEDd)
@@ -2210,18 +2205,18 @@ class MainWindow(QMainWindow):
     def parcourir_dossier(self):
         # Fonction pour parcourir un dossier et afficher ses fichiers
         options = QFileDialog.Options()
-        self.variables.dossier_selectionne = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", options=options)
-        if self.variables.dossier_selectionne:
-            files_brute = os.listdir(self.variables.dossier_selectionne)
+        self.dossier_selectionne = QFileDialog.getExistingDirectory(self, "Sélectionner un dossier", options=options)
+        if self.dossier_selectionne:
+            files_brute = os.listdir(self.dossier_selectionne)
             files = sorted(
                 [f for f in files_brute],
-                key=lambda x: os.path.getctime(os.path.join(self.variables.dossier_selectionne, x)),
+                key=lambda x: os.path.getctime(os.path.join(self.dossier_selectionne, x)),
                 reverse=True
             )
             self.liste_fichiers.clear()
             self.liste_fichiers.addItems(files)
-            self.variables.liste_chemins_fichiers = [
-                os.path.join(self.variables.dossier_selectionne, f) for f in files
+            self.liste_chemins_fichiers = [
+                os.path.join(self.dossier_selectionne, f) for f in files
             ]
 
 #########################################################################################################################################################################################
@@ -2712,7 +2707,7 @@ class MainWindow(QMainWindow):
     def f_data_spectro(self):
         if self.loaded_filename_spectro:
             try:
-                self.variables.data_Spectro = pd.read_csv(
+                self.data_Spectro = pd.read_csv(
                     self.loaded_filename_spectro,
                     sep=r"\s+",
                     header=None,
@@ -2724,22 +2719,22 @@ class MainWindow(QMainWindow):
                 return
 
         # Cas 2 colonnes : (X, Y empilés) → reshape en [X, Spec1, Spec2, ...]
-        if len(self.variables.data_Spectro.columns) == 2:
-            wave = self.variables.data_Spectro.iloc[:, 0]
-            Iua = self.variables.data_Spectro.iloc[:, 1]
+        if len(self.data_Spectro.columns) == 2:
+            wave = self.data_Spectro.iloc[:, 0]
+            Iua = self.data_Spectro.iloc[:, 1]
             wave_unique = np.unique(wave)
             num_spec = len(wave) // len(wave_unique)
 
             if num_spec >= 1:
                 Iua = Iua.values.reshape(num_spec, len(wave_unique)).T
-                self.variables.data_Spectro = pd.DataFrame(
+                self.data_Spectro = pd.DataFrame(
                     np.column_stack([wave_unique, Iua]),
                     columns=[0] + [i + 1 for i in range(num_spec)],
                 )
 
         # ---- MISE À JOUR DE LA SPINBOX DE SPECTRE ----
         # nb de spectres = nb de colonnes - 1 (colonne 0 = X)
-        n_spec = max(0, self.variables.data_Spectro.shape[1] - 1)
+        n_spec = max(0, self.data_Spectro.shape[1] - 1)
 
         if hasattr(self, "spinbox_spec_index"):
             self.spinbox_spec_index.blockSignals(True)
@@ -2791,7 +2786,7 @@ class MainWindow(QMainWindow):
 
     def f_filter_files(self):
         filter_text = self.search_bar.text().lower()
-        filtered_files = [f.lower() for f in self.variables.liste_chemins_fichiers  if filter_text in f.lower()]
+        filtered_files = [f.lower() for f in self.liste_chemins_fichiers  if filter_text in f.lower()]
         self.liste_fichiers.clear()
         self.liste_fichiers.addItems(filtered_files)
 
@@ -2854,9 +2849,9 @@ class MainWindow(QMainWindow):
 
         try:
             if self.bit_load_jauge:
-                self.variables.Gauge_select.lamb_fit = \
-                    self.variables.Gauge_select.inv_f_P(value) + self.deltalambdaT
-                self.variables.Gauge_select = self.f_p_move(self.variables.Gauge_select, value)
+                self.Gauge_select.lamb_fit = \
+                    self.Gauge_select.inv_f_P(value) + self.deltalambdaT
+                self.Gauge_select = self.f_p_move(self.Gauge_select, value)
 
             if self.bit_modif_jauge and self.Spectrum is not None and self.index_jauge >= 0:
                 G = self.Spectrum.Gauges[self.index_jauge]
@@ -2911,8 +2906,8 @@ class MainWindow(QMainWindow):
 
         try:
             if self.bit_load_jauge:
-                self.variables.Gauge_select.lamb_fit = value
-                self.variables.Gauge_select = self.f_x_move(self.variables.Gauge_select, value)
+                self.Gauge_select.lamb_fit = value
+                self.Gauge_select = self.f_x_move(self.Gauge_select, value)
 
             if self.bit_modif_jauge and self.Spectrum is not None and self.index_jauge >= 0:
                 G = self.Spectrum.Gauges[self.index_jauge]
@@ -2968,12 +2963,12 @@ class MainWindow(QMainWindow):
             return
         try:
             if self.bit_load_jauge:
-                self.variables.Gauge_select.lamb_fit = round(float(inversefunc(
-                    lambda x_: CL.T_Ruby_by_P(x_, P=self.variables.Gauge_select.P,
-                                            lamb0R=self.variables.Gauge_select.lamb0),
+                self.Gauge_select.lamb_fit = round(float(inversefunc(
+                    lambda x_: CL.T_Ruby_by_P(x_, P=self.Gauge_select.P,
+                                            lamb0R=self.Gauge_select.lamb0),
                     value
                 )), 3)
-                self.variables.Gauge_select = self.f_t_move(self.variables.Gauge_select, value)
+                self.Gauge_select = self.f_t_move(self.Gauge_select, value)
 
             if self.bit_modif_jauge and self.Spectrum is not None and self.index_jauge >= 0:
                 G = self.Spectrum.Gauges[self.index_jauge]
@@ -3064,17 +3059,17 @@ class MainWindow(QMainWindow):
         if go:
             self.bit_load_jauge=True
             self.bit_modif_jauge=False
-            self.variables.Gauge_select=CL.Gauge(name=new_g)
-            self.variables.Gauge_select.P=self.spinbox_P.value()
-            self.lamb0_entry.setText(str(self.variables.Gauge_select.lamb0))
-            self.name_spe_entry.setText(str(self.variables.Gauge_select.name_spe))
+            self.Gauge_select=CL.Gauge(name=new_g)
+            self.Gauge_select.P=self.spinbox_P.value()
+            self.lamb0_entry.setText(str(self.Gauge_select.lamb0))
+            self.name_spe_entry.setText(str(self.Gauge_select.name_spe))
             self.f_dell_lines()
-            self.f_p_move(self.variables.Gauge_select,value=self.variables.Gauge_select.P)
+            self.f_p_move(self.Gauge_select,value=self.Gauge_select.P)
             self.name_gauge.setText("Add ?")
             self.name_gauge.setStyleSheet("background-color: red;")
-            if self.variables.Gauge_select.name == "Ruby":
+            if self.Gauge_select.name == "Ruby":
                 self.spinbox_T.setEnabled(True)
-                #self.spinbox_T.setValue(self.variables.Gauge_select.T)
+                #self.spinbox_T.setValue(self.Gauge_select.T)
             else:
                 self.spinbox_T.setEnabled(False)
                 self.spinbox_T.setValue(293)
@@ -3885,7 +3880,7 @@ class MainWindow(QMainWindow):
         # CAS 1 : on vient d'un clic dans la liste de fichiers (item non None)
         # ------------------------------------------------------------------
         if objet_run is None and item is not None:
-            chemin_fichier = os.path.join(self.variables.dossier_selectionne, item.text())
+            chemin_fichier = os.path.join(self.dossier_selectionne, item.text())
             index_file = self.liste_fichiers.row(item)
 
             if index_file not in self.file_index_map:
@@ -3924,8 +3919,8 @@ class MainWindow(QMainWindow):
         if objet_run is None:
             return
 
-        self.variables.liste_objets.append(objet_run)
-        self.index_select = len(self.variables.liste_objets) - 1
+        self.liste_objets.append(objet_run)
+        self.index_select = len(self.liste_objets) - 1
         self.RUN = objet_run
 
         # Couleur dédiée à ce run
@@ -4339,7 +4334,7 @@ class MainWindow(QMainWindow):
             del self.file_index_map[k]
 
         # Supprime le CEDd legacy si présent
-        self.variables.liste_objets = [ced for ced in self.variables.liste_objets if self._get_run_id(ced) != run_id]
+        self.liste_objets = [ced for ced in self.liste_objets if self._get_run_id(ced) != run_id]
 
         # Sélectionne un autre run si disponible
         if self.liste_objets_widget.count() > 0:
@@ -4444,7 +4439,7 @@ class MainWindow(QMainWindow):
         self.list_y_fit_start = [[] for _ in range(self.nb_jauges)]
 
         self.Nom_pic = [[] for _ in range(self.nb_jauges)]
-        self.variables.Spec_fit = [None for _ in range(self.nb_jauges)]
+        self.Spec_fit = [None for _ in range(self.nb_jauges)]
         self.Param0 = [[] for _ in range(self.nb_jauges)]
         self.Param_FIT = [[] for _ in range(self.nb_jauges)]
         self.model_pic_fit = None
@@ -4482,7 +4477,7 @@ class MainWindow(QMainWindow):
 #########################################################################################################################################################################################
 #? COMMANDE SAVE
     def CREAT_new_CEDd_fit(self):
-        self.variables.Spectrum_save = copy.deepcopy(self.Spectrum)
+        self.Spectrum_save = copy.deepcopy(self.Spectrum)
         if self.var_bouton[5].isChecked():
             folder_movie = self.loaded_filename_movie
         else:
@@ -4512,7 +4507,7 @@ class MainWindow(QMainWindow):
 
     def CREAT_new_CEDd(self):
         """Crée un CEDd sans lancer de fit automatique."""
-        self.variables.Spectrum_save = copy.deepcopy(self.Spectrum)
+        self.Spectrum_save = copy.deepcopy(self.Spectrum)
 
         if self.var_bouton[5].isChecked():
             folder_movie = self.loaded_filename_movie
@@ -4560,7 +4555,7 @@ class MainWindow(QMainWindow):
             n_spec = 1
 
         # Sécurité : clamp sur le nombre de colonnes disponibles
-        max_col = self.variables.data_Spectro.shape[1] - 1  # dernière colonne de Y
+        max_col = self.data_Spectro.shape[1] - 1  # dernière colonne de Y
         if n_spec < 1:
             n_spec = 1
         if n_spec > max_col:
@@ -4568,8 +4563,8 @@ class MainWindow(QMainWindow):
 
         self.text_box_msg.setText(f"New spec n°{n_spec}")
 
-        x = np.array(self.variables.data_Spectro[0])
-        y = np.array(self.variables.data_Spectro[n_spec])
+        x = np.array(self.data_Spectro[0])
+        y = np.array(self.data_Spectro[n_spec])
 
         # Création du nouveau Spectre avec les mêmes jauges que le spectre courant
         new_spectrum = CL.Spectre(x, y, Gauges=save_gauges)
@@ -4593,7 +4588,7 @@ class MainWindow(QMainWindow):
     def Update_var(self,name=None):
         self.list_name_gauges.append(name)
         self.Nom_pic.append([])
-        self.variables.Spec_fit.append(None)
+        self.Spec_fit.append(None)
         self.Param0.append([])
         self.Param_FIT.append([])
         self.J.append(0) #Compteur du nombre d epic selectioné
