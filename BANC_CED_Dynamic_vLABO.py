@@ -4112,6 +4112,8 @@ class MainWindow(QMainWindow):
         save_index_spec = -1
         nb_j_old = len(self.Spectrum.Gauges) if self.Spectrum is not None else 0
 
+        self._clear_selected_peak_overlay()
+
         if Spectrum is None:
             # On vient de l'UI (listbox)
             if not self.bit_bypass:
@@ -4239,6 +4241,8 @@ class MainWindow(QMainWindow):
         """Charge la jauge `self.index_jauge` dans l'UI (sans Matplotlib)."""
         self.bit_load_jauge = False
         self.bit_modif_jauge = True
+
+        self._clear_selected_peak_overlay()
 
         G = self.Spectrum.Gauges[self.index_jauge]
 
@@ -4997,7 +5001,64 @@ class MainWindow(QMainWindow):
             print("f_pic_fit ERROR pic not change:", e)
             return X_pic.model, X_pic, indexX, False
 
+    def _build_full_y_plot(self, y_partial, indexX):
+        """Return a y-array matching ``self.Spectrum.wnb`` length.
+
+        ``y_partial`` may only cover a subset of x (``indexX``). This helper
+        re-injects those values into a zeroed array aligned with the full
+        spectrum to keep downstream sums (``list_y_fit_start``) coherent.
+        """
+
+        S = self.Spectrum
+        if S is None or not hasattr(S, "wnb") or S.wnb is None:
+            return np.asarray(y_partial) if y_partial is not None else np.array([])
+
+        total_len = len(S.wnb)
+        if y_partial is None:
+            return np.zeros(total_len)
+
+        y_partial = np.asarray(y_partial, dtype=float)
+        if len(y_partial) == total_len:
+            return y_partial
+
+        y_full = np.zeros(total_len)
+        if indexX is not None and len(indexX) == len(y_partial):
+            y_full[indexX] = y_partial
+        else:
+            # Fallback: copy what we can.
+            y_full[: min(total_len, len(y_partial))] = y_partial[: min(total_len, len(y_partial))]
+        return y_full
+
+    def _clear_selected_peak_overlay(self):
+        """Clear the overlay curves highlighting the selected peak."""
+
+        try:
+            self.curve_spec_pic_select.setData([], [])
+            self.curve_zoom_pic.setData([], [])
+        except Exception:
+            pass
+
     def Replace_pic_fit(self):
+        if (
+            self.Spectrum is None
+            or self.index_jauge is None
+            or self.index_pic_select is None
+            or self.index_jauge < 0
+            or self.index_pic_select < 0
+        ):
+            return
+
+        if (
+            self.index_jauge >= len(self.Param0)
+            or self.index_jauge >= len(self.Nom_pic)
+            or self.index_pic_select >= len(self.Param0[self.index_jauge])
+            or self.index_pic_select >= len(self.Nom_pic[self.index_jauge])
+            or not hasattr(self.Spectrum, "Gauges")
+            or self.index_jauge >= len(self.Spectrum.Gauges)
+            or self.index_pic_select >= len(self.Spectrum.Gauges[self.index_jauge].pics)
+        ):
+            return
+
         out, X_pic, indexX, bit = self.f_pic_fit()
         if not bit:
             self.text_box_msg.setText(
@@ -5030,19 +5091,41 @@ class MainWindow(QMainWindow):
             p = out.params
         else:
             p = out.make_params()
-            y_plot = X_pic.model.eval(p, x=self.Spectrum.wnb)
+            x_eval = getattr(self.Spectrum, "wnb", None)
+            y_plot = X_pic.model.eval(p, x=x_eval) if x_eval is not None else np.array([])
 
-        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot
+        y_plot_full = self._build_full_y_plot(y_plot, indexX)
+
+        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot_full
         self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
 
-        self.curve_zoom_pic.setData(self.Spectrum.wnb, y_plot)
-        self.curve_spec_pic_select.setData(self.Spectrum.wnb, y_plot)
-        self.curve_zoom_data.setData(self.Spectrum.wnb, self.Spectrum.spec - (self.y_fit_start - y_plot) - self.Spectrum.blfit)
-        self.curve_zoom_data_brut.setData(S.wnb, S.spec- S.blfit)
+        x_data = getattr(self.Spectrum, "wnb", np.array([]))
+        self.curve_zoom_pic.setData(x_data, y_plot_full)
+        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
+            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
+            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec - self.Spectrum.blfit)
         self.Print_fit_start()  # -> recalc global + refresh
-      
+
     def Replace_pic(self):
-        if self.index_pic_select is None:
+        if (
+            self.Spectrum is None
+            or self.index_jauge is None
+            or self.index_pic_select is None
+            or self.index_jauge < 0
+            or self.index_pic_select < 0
+        ):
+            return
+
+        if (
+            self.index_jauge >= len(self.Param0)
+            or self.index_jauge >= len(self.Nom_pic)
+            or self.index_pic_select >= len(self.Param0[self.index_jauge])
+            or self.index_pic_select >= len(self.Nom_pic[self.index_jauge])
+            or not hasattr(self.Spectrum, "Gauges")
+            or self.index_jauge >= len(self.Spectrum.Gauges)
+            or self.index_pic_select >= len(self.Spectrum.Gauges[self.index_jauge].pics)
+        ):
             return
 
         if not self.bit_bypass:
@@ -5085,17 +5168,22 @@ class MainWindow(QMainWindow):
             sigma=self.Param0[self.index_jauge][self.index_pic_select][2],
             model_fit=self.Param0[self.index_jauge][self.index_pic_select][4],
         )
+        x_eval = getattr(self.Spectrum, "wnb", None)
         params = X_pic.model.make_params()
-        y_plot = X_pic.model.eval(params, x=self.Spectrum.wnb)
+        y_plot = X_pic.model.eval(params, x=x_eval) if x_eval is not None else np.array([])
 
-        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot
+        y_plot_full = self._build_full_y_plot(y_plot, None)
+
+        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot_full
         self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
 
-  
-        self.curve_zoom_pic.setData(self.Spectrum.wnb, y_plot)
-        self.curve_spec_pic_select.setData(self.Spectrum.wnb, y_plot)
-        self.curve_zoom_data.setData(self.Spectrum.wnb, self.Spectrum.spec - (self.y_fit_start - y_plot) - self.Spectrum.blfit)
-        self.curve_zoom_data_brut.setData(self.Spectrum.wnb, self.Spectrum.spec- self.Spectrum.blfit)
+
+        x_data = getattr(self.Spectrum, "wnb", np.array([]))
+        self.curve_zoom_pic.setData(x_data, y_plot_full)
+        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
+            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
+            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec- self.Spectrum.blfit)
         self.Print_fit_start()
 
     def _CED_multi_fit(self):
