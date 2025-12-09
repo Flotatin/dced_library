@@ -570,19 +570,27 @@ class MainWindow(QMainWindow):
         if plot_item is None:
             return
 
-        viewbox = plot_item.getViewBox()
+        viewbox = None
+
+        if hasattr(plot_item, "getViewBox"):
+            viewbox = plot_item.getViewBox()
+        elif hasattr(plot_item, "setBackgroundColor"):
+            viewbox = plot_item
+
         if viewbox is not None:
             viewbox.setBackgroundColor(theme["plot_background"])
 
-        axis_pen = self._mk_pen(theme["axis_pen"])
-        text_pen = self._mk_pen(theme["text"])
-        for name in ("bottom", "left", "right", "top"):
-            axis = plot_item.getAxis(name)
-            if axis is not None:
-                axis.setPen(axis_pen)
-                axis.setTextPen(text_pen)
+        if hasattr(plot_item, "getAxis"):
+            axis_pen = self._mk_pen(theme["axis_pen"])
+            text_pen = self._mk_pen(theme["text"])
+            for name in ("bottom", "left", "right", "top"):
+                axis = plot_item.getAxis(name)
+                if axis is not None:
+                    axis.setPen(axis_pen)
+                    axis.setTextPen(text_pen)
 
-        plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
+        if hasattr(plot_item, "showGrid"):
+            plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
     def _apply_theme(self, theme_name: str):
         theme = self._get_theme(theme_name)
@@ -659,6 +667,7 @@ class MainWindow(QMainWindow):
                 scatter.setPen(scatter_pen)
 
         if hasattr(self, "pg_text"):
+            self._apply_plot_item_theme(self.pg_text, theme)
             self.pg_text.setBackgroundColor(theme["plot_background"])
 
     def _toggle_theme(self, checked: bool):
@@ -1176,80 +1185,68 @@ class MainWindow(QMainWindow):
         self.SpectraBox = QGroupBox("Spectrum")
         SpectraBoxFirstLayout = QVBoxLayout()
 
-        theme = self._get_theme()
-
         # ================== WIDGET PyQtGraph ==================
         self.pg_spec = pg.GraphicsLayoutWidget()
-        self.pg_spec.setBackground(theme["plot_background"])
 
         # ---- Layout 3x2 : (zoom / baseline / FFT) x (spectrum / dY) ----
         # Row 0, Col 0 : ZOOM
         self.pg_zoom = self.pg_spec.addPlot(row=0, col=0)
         self.pg_zoom.hideAxis('bottom')
         self.pg_zoom.hideAxis('left')
-        self.pg_zoom.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # Row 1, Col 0 : BASELINE
         self.pg_baseline = self.pg_spec.addPlot(row=1, col=0)
-        self.pg_baseline.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_baseline.setLabel('bottom', 'X')
         self.pg_baseline.setLabel('left', 'Intensity')
 
         # Row 2, Col 0 : FFT
         self.pg_fft = self.pg_spec.addPlot(row=2, col=0)
-        self.pg_fft.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_fft.setLabel('bottom', 'f')
         self.pg_fft.setLabel('left', '|F|')
 
         # Row 2, Col 1 : dY
         self.pg_dy = self.pg_spec.addPlot(row=2, col=1)
-        self.pg_dy.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_dy.setLabel('bottom', 'X')
         self.pg_dy.setLabel('left', 'dY')
 
         # Row 0–1, Col 1 : SPECTRUM
         self.pg_spectrum = self.pg_spec.addPlot(row=0, col=1, rowspan=2)
-        self.pg_spectrum.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
         self.pg_spectrum.setLabel('bottom', 'X (U.A)')
         self.pg_spectrum.setLabel('left', 'Y (U.A)')
 
         # ================== COURBES PERSISTANTES ==================
         # Spectre corrigé
-        self.curve_spec_data = self.pg_spectrum.plot(pen=self._mk_pen(theme["pens"]["spectrum_data"]))  # Spectrum.y_corr
+        self.curve_spec_data = self.pg_spectrum.plot()  # Spectrum.y_corr
 
         # Fit total (somme des pics)
-        self.curve_spec_fit = self.pg_spectrum.plot(pen=self._mk_pen(theme["pens"]["spectrum_fit"]))
+        self.curve_spec_fit = self.pg_spectrum.plot()
 
         # Pic sélectionné (remplissage)
-        self.curve_spec_pic_select = self.pg_spectrum.plot(
-            pen=None, fillLevel=0, brush=pg.mkBrush(theme["pens"]["spectrum_pic_brush"])
-        )
+        self.curve_spec_pic_select = self.pg_spectrum.plot(pen=None, fillLevel=0)
 
         # dY
-        self.curve_dy = self.pg_dy.plot(pen=self._mk_pen(theme["pens"]["dy"]))
-        self.line_dy_zero = self.pg_dy.addLine(y=0, pen=self._mk_pen(theme["pens"]["zero_line"]))
+        self.curve_dy = self.pg_dy.plot()
+        self.line_dy_zero = self.pg_dy.addLine(y=0)
 
         # Baseline : brut + baseline
-        self.curve_baseline_brut = self.pg_baseline.plot(pen=self._mk_pen(theme["pens"]["baseline_brut"]))  # Spectrum.spec
-        self.curve_baseline_blfit = self.pg_baseline.plot(pen=self._mk_pen(theme["pens"]["baseline_fit"]))  # Spectrum.blfit
+        self.curve_baseline_brut = self.pg_baseline.plot()  # Spectrum.spec
+        self.curve_baseline_blfit = self.pg_baseline.plot()  # Spectrum.blfit
 
         # FFT
-        self.curve_fft = self.pg_fft.plot(pen=self._mk_pen(theme["pens"]["fft"]))
+        self.curve_fft = self.pg_fft.plot()
 
         # Zoom : data + pic sélectionné
-        self.curve_zoom_data = self.pg_zoom.plot(pen=self._mk_pen(theme["pens"]["zoom_data"]))
-        self.curve_zoom_data_brut = self.pg_zoom.plot(pen=self._mk_pen(theme["pens"]["zoom_data_brut"]))
-        self.curve_zoom_pic = self.pg_zoom.plot(
-            pen=None, fillLevel=0, brush=pg.mkBrush(theme["pens"]["zoom_pic_brush"])
-        )
+        self.curve_zoom_data = self.pg_zoom.plot()
+        self.curve_zoom_data_brut = self.pg_zoom.plot()
+        self.curve_zoom_pic = self.pg_zoom.plot(pen=None, fillLevel=0)
 
         # ================== CROIX / LIGNES ==================
-        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["selection_line"]))
-        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=self._mk_pen(theme["pens"]["selection_line"]))
+        self.vline = pg.InfiniteLine(angle=90, movable=False)
+        self.hline = pg.InfiniteLine(angle=0, movable=False)
         self.pg_spectrum.addItem(self.vline)
         self.pg_spectrum.addItem(self.hline)
 
-        self.cross_zoom = pg.ScatterPlotItem(symbol="+",pen=None, brush=pg.mkBrush(theme["pens"]["cross_zoom"]), size=10)
+        self.cross_zoom = pg.ScatterPlotItem(symbol="+", pen=None, size=10)
         self.pg_zoom.addItem(self.cross_zoom)
 
         # ================== ÉTAT LOGIQUE ==================
@@ -1340,8 +1337,6 @@ class MainWindow(QMainWindow):
         group_graphique = QGroupBox("dDAC")
         layout_graphique = QVBoxLayout()
 
-        theme = self._get_theme()
-
         movie_layout = QHBoxLayout()
         # Slider Qt pour index d'image
         self.slider = QSlider(Qt.Horizontal)
@@ -1375,23 +1370,19 @@ class MainWindow(QMainWindow):
 
         # ================== WIDGET PyQtGraph ==================
         self.pg_ddac = pg.GraphicsLayoutWidget()
-        self.pg_ddac.setBackground(theme["plot_background"])
 
         # Col 0 : P, dP/dt/T, sigma
         self.pg_P = self.pg_ddac.addPlot(row=0, col=0)
         self.pg_P.setLabel('bottom', 'Time (s)')
         self.pg_P.setLabel('left', 'P (GPa)')
-        self.pg_P.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         self.pg_dPdt = self.pg_ddac.addPlot(row=1, col=0)
         self.pg_dPdt.setLabel('bottom', 'Time (s)')
         self.pg_dPdt.setLabel('left', 'dP/dt (GPa/ms), T (K)')
-        self.pg_dPdt.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         self.pg_sigma = self.pg_ddac.addPlot(row=2, col=0)
         self.pg_sigma.setLabel('bottom', 'Time (s)')
         self.pg_sigma.setLabel('left', 'sigma (nm)')
-        self.pg_sigma.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # Col 1 : IMAGE + Δλ
         self.pg_movie = self.pg_ddac.addPlot(row=0, col=1)
@@ -1403,13 +1394,12 @@ class MainWindow(QMainWindow):
 
         self.pg_text = self.pg_ddac.addViewBox(row=1, col=1)
         self.pg_text.setAspectLocked(False)
-        self.pg_text_label = pg.TextItem(color=theme["pens"]["text_item"],)
+        self.pg_text_label = pg.TextItem()
         self.pg_text.addItem(self.pg_text_label)
 
         self.pg_dlambda = self.pg_ddac.addPlot(row=2, col=1)
         self.pg_dlambda.setLabel('bottom', 'Spectrum index')
         self.pg_dlambda.setLabel('left', 'Δλ12 (nm)')
-        self.pg_dlambda.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
         # ================== COURBES PERSISTANTES ==================
         self.curves_P = []        # une courbe par jauge
@@ -1421,23 +1411,23 @@ class MainWindow(QMainWindow):
         self.curves_dlambda = []
 
         # Ligne verticale pour t sélectionné
-        self.line_t_P = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
-        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
-        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
-        self.line_p0 = pg.InfiniteLine(0,angle=0, movable=False, pen=self._mk_pen(theme["pens"]["baseline_time"]))
+        self.line_t_P = pg.InfiniteLine(angle=90, movable=False)
+        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False)
+        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False)
+        self.line_p0 = pg.InfiniteLine(0,angle=0, movable=False)
         self.pg_P.addItem(self.line_p0)
         self.pg_P.addItem(self.line_t_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
 
-        self.line_nspec = pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["line_t"]))
+        self.line_nspec = pg.InfiniteLine(angle=90, movable=False)
         self.pg_dlambda.addItem(self.line_nspec)
 
         # Zone temporelle film (bornes)
         self.zone_movie = [None, None]
         self.zone_movie_lines = [
-            pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["zone_movie"])),
-            pg.InfiniteLine(angle=90, movable=False, pen=self._mk_pen(theme["pens"]["zone_movie"]))
+            pg.InfiniteLine(angle=90, movable=False),
+            pg.InfiniteLine(angle=90, movable=False)
         ]
         for line in self.zone_movie_lines:
             self.pg_P.addItem(line)
@@ -1448,7 +1438,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_P = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=self._mk_pen(theme["pens"]["scatter"]),
+            pen=None,
             brush=None,          # pas de remplissage
             size=10,
             symbol='+'           # croix
@@ -1457,7 +1447,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_dPdt = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=self._mk_pen(theme["pens"]["scatter"]),
+            pen=None,
             brush=None,
             size=10,
             symbol='+'
@@ -1466,7 +1456,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_sigma = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=self._mk_pen(theme["pens"]["scatter"]),
+            pen=None,
             brush=None,
             size=10,
             symbol='+'
@@ -1475,7 +1465,7 @@ class MainWindow(QMainWindow):
 
         self.scatter_dlambda = pg.ScatterPlotItem(
             x=[], y=[],
-            pen=self._mk_pen(theme["pens"]["scatter"]),
+            pen=None,
             brush=None,
             size=10,
             symbol='+'
