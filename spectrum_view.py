@@ -1,0 +1,1452 @@
+import copy
+import random
+
+import numpy as np
+import pyqtgraph as pg
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QVBoxLayout
+
+from Bibli_python import CL_FD_Update as CL
+
+
+class SciAxis(pg.AxisItem):
+    """Axe qui affiche les ticks en notation scientifique (1.23e+04)."""
+
+    def tickStrings(self, values, scale, spacing):
+        # values est la liste de positions de ticks en coordonnées "données"
+        # On ne touche PAS aux données, on ne fait que formatter l'affichage.
+        return [f"{v:.1e}" for v in values]
+
+
+class SpectrumViewMixin:
+    def _setup_spectrum_box(self):
+        self.SpectraBox = QGroupBox("Spectrum")
+        SpectraBoxFirstLayout = QVBoxLayout()
+
+        # ================== WIDGET PyQtGraph ==================
+        self.pg_spec = pg.GraphicsLayoutWidget()
+
+        # ---- Layout 3x2 : (zoom / baseline / FFT) x (spectrum / dY) ----
+        # Row 0, Col 0 : ZOOM
+        self.pg_zoom = self.pg_spec.addPlot(row=0, col=0)
+        self.pg_zoom.hideAxis('bottom')
+        self.pg_zoom.hideAxis('left')
+
+        # Row 1, Col 0 : BASELINE
+        y_axis_base_sci = SciAxis(orientation='left')
+        self.pg_baseline = self.pg_spec.addPlot(
+            row=1,
+            col=0,
+            axisItems={'left': y_axis_base_sci}
+        )
+        self.pg_baseline.setLabel('bottom', 'X')
+        self.pg_baseline.setLabel('left', 'Intensity')
+
+
+        # Row 2, Col 0 : FFT
+        self.pg_fft = self.pg_spec.addPlot(row=2, col=0)
+        self.pg_fft.setLabel('bottom', 'f')
+        self.pg_fft.setLabel('left', '|F|')
+
+        # Row 2, Col 1 : dY
+        self.pg_dy = self.pg_spec.addPlot(row=2, col=1)
+        self.pg_dy.setLabel('bottom', 'X')
+        self.pg_dy.setLabel('left', 'dY')
+
+        # Row 0–1, Col 1 : SPECTRUM
+        y_axis_sci = SciAxis(orientation='left')
+        self.pg_spectrum = self.pg_spec.addPlot(
+            row=0,
+            col=1,
+            rowspan=2,
+            axisItems={'left': y_axis_sci},
+        )
+        self.pg_spectrum.setLabel('bottom', 'X (U.A)')
+        self.pg_spectrum.setLabel('left', 'Y (U.A)')
+
+        # ================== COURBES PERSISTANTES ==================
+        # Spectre corrigé
+        self.curve_spec_data = self.pg_spectrum.plot()  # Spectrum.y_corr
+
+        # Fit total (somme des pics)
+        self.curve_spec_fit = self.pg_spectrum.plot()
+
+        # Filtres, baseline etc.
+        self.curve_baseline_brut = self.pg_baseline.plot()
+        self.curve_baseline_blfit = self.pg_baseline.plot()
+        self.curve_fft = self.pg_fft.plot()
+
+        # dY
+        self.curve_dy = self.pg_dy.plot()
+
+        # Zoom : zone + pic sélectionné + spectre brut / corrigé
+        self.curve_zoom_data = self.pg_zoom.plot()
+        self.curve_zoom_pic = self.pg_zoom.plot(pen='r')
+        self.curve_zoom_data_brut = self.pg_zoom.plot(pen='y')
+
+        # Sur le spectre principal : pic sélectionné
+        self.curve_spec_pic_select = self.pg_spectrum.plot(pen=None, fillLevel=0)
+
+        # Sélections verticales/horizontales
+        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1))
+        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('y', width=1))
+        self.pg_spectrum.addItem(self.vline)
+        self.pg_spectrum.addItem(self.hline)
+
+        # Pour le zoom : on met une petite croix
+        self.cross_zoom = self.pg_zoom.plot([], [], pen=None, symbol='+', symbolSize=10, symbolBrush='y')
+
+        # Zones d'exclusion (fit window)
+        self.zoom_exclusion_left = pg.LinearRegionItem(values=(0, 0.5), movable=False, brush=pg.mkBrush(255, 0, 0, 40))
+        self.zoom_exclusion_right = pg.LinearRegionItem(values=(0.5, 1), movable=False, brush=pg.mkBrush(255, 0, 0, 40))
+        self.pg_zoom.addItem(self.zoom_exclusion_left)
+        self.pg_zoom.addItem(self.zoom_exclusion_right)
+        self.zoom_exclusion_left.setZValue(-10)
+        self.zoom_exclusion_right.setZValue(-10)
+        self.zoom_exclusion_left.setVisible(False)
+        self.zoom_exclusion_right.setVisible(False)
+
+        self._spectrum_limits_initialized = False  # une seule initialisation XRange
+        self._zoom_limits_initialized = False
+
+        self.select_clic_box = None
+
+        # index pour les jauges / pics
+        self.index_jauge = -1
+        self.index_pic_select = -1
+        self.index_spec = 0
+
+        self.X0 = 0
+        self.Y0 = 0
+        self.Zone_fit = []
+        self.X_s = []
+        self.X_e = []
+
+        self.y_fit_start = None
+        self.model_pic_fit = None
+
+        self.bit_fit_T = False
+        self.bit_print_fit_T = False
+        self.bit_modif_jauge = False
+        self.bit_load_jauge = False
+        self.bit_filtre = False
+
+        # Couleurs pour les jauges
+        self.c_m = [
+            "#ffcccc", "#ffe9cc", "#fdffcc", "#e3ffcc", "#ccffef",
+            "#ccf0ff", "#ccd6ff", "#e1ccff", "#fbccff", "#ffcce8"
+        ]
+        self.color = []
+
+        # ================== INTÉGRATION UI ==================
+        SpectraBoxFirstLayout.addWidget(self.pg_spec)
+
+        layout_check = QHBoxLayout()
+        self.select_clic_box = QCheckBox("Select clic pic (q)", self)
+        self.select_clic_box.setChecked(True)
+        layout_check.addWidget(self.select_clic_box)
+
+        self.zone_spectrum_box = QCheckBox("Zone Fit Spectrum (Z)", self)
+        self.zone_spectrum_box.setChecked(True)
+        layout_check.addWidget(self.zone_spectrum_box)
+
+        self.Gauge_init_box = QCheckBox("Gauge_init (0)", self)
+        self.Gauge_init_box.setChecked(False)
+        layout_check.addWidget(self.Gauge_init_box)
+
+        self.vslmfit = QCheckBox("vslmfit", self)
+        self.vslmfit.setChecked(False)
+        layout_check.addWidget(self.vslmfit)
+
+        SpectraBoxFirstLayout.addLayout(layout_check)
+        self.SpectraBox.setLayout(SpectraBoxFirstLayout)
+        self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
+
+        # ================== EVENTS PyQtGraph ==================
+        # clic sur le spectre principal
+        self.pg_spectrum.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
+
+         # ================== FACTEURS LIGNES / COLONNES ==================
+        # 3 lignes : (2, 2, 1)  -> les 2 premières 2x plus grandes que la 3ème
+        self._spec_row_factors = (3, 2, 1)
+        # 2 colonnes : par exemple 30% (col 0) / 70% (col 1)
+        self._spec_col_factors = (1, 2)
+
+        # premier ajustement immédiat
+        self._update_graphicslayout_sizes(
+            self.pg_spec,
+            row_factors=self._spec_row_factors,
+            col_factors=self._spec_col_factors,
+        )
+    def _update_fit_window(self, indexX = None) -> None:
+        """Update the excluded zoom regions according to the current fit window."""
+
+        left_region = getattr(self, "zoom_exclusion_left", None)
+        right_region = getattr(self, "zoom_exclusion_right", None)
+
+        if left_region is None or right_region is None:
+            return
+
+        def _hide_regions() -> None:
+            left_region.setVisible(False)
+            right_region.setVisible(False)
+
+        gauge_index = getattr(self, "index_jauge", None)
+
+        if (
+            self.Spectrum is None
+            or self.index_pic_select is None
+            or self.index_pic_select < 0
+            or gauge_index is None
+            or gauge_index < 0
+        ):
+            _hide_regions()
+            return
+
+
+        try:
+            params = self.Param0[gauge_index][self.index_pic_select]
+        except (IndexError, TypeError, AttributeError):
+            _hide_regions()
+            return
+
+        if not params:
+            _hide_regions()
+            return
+
+        n_sigma_widget = getattr(self, "sigma_pic_fit_entry", None)
+        if n_sigma_widget is None:
+            _hide_regions()
+            return
+
+        center = float(params[0])
+        sigma = float(params[2])
+        n_sigma = float(n_sigma_widget.value())
+
+        if not np.isfinite(center) or not np.isfinite(sigma) or not np.isfinite(n_sigma):
+            _hide_regions()
+            return
+
+        spectrum_x = getattr(self.Spectrum, "wnb", None)
+        if spectrum_x is None:
+            _hide_regions()
+            return
+
+        x_data = np.asarray(spectrum_x, dtype=float)
+        if x_data.size == 0:
+            _hide_regions()
+            return
+
+        window_left = center - n_sigma * sigma
+        window_right = center + n_sigma * sigma
+        fit_left = float(min(window_left, window_right))
+        fit_right = float(max(window_left, window_right))
+
+        if indexX is None:
+            mask = (x_data >= fit_left) & (x_data <= fit_right)
+            index_array = np.nonzero(mask)[0]
+        else:
+            index_array = np.asarray(indexX)
+
+        if index_array.size == 0:
+            _hide_regions()
+            return
+
+        x_min = float(np.min(x_data))
+        x_max = float(np.max(x_data))
+
+        left_region_end = min(max(fit_left, x_min), x_max)
+        right_region_start = max(min(fit_right, x_max), x_min)
+
+        if left_region_end > x_min:
+            left_region.setRegion((x_min, left_region_end))
+            left_region.setVisible(True)
+        else:
+            left_region.setVisible(False)
+
+        if right_region_start < x_max:
+            right_region.setRegion((right_region_start, x_max))
+            right_region.setVisible(True)
+        else:
+            right_region.setVisible(False)
+
+    def _on_pg_spectrum_click(self, mouse_event):
+        """Gère le clic gauche sur les vues spectrales et met à jour les marqueurs.
+
+        Le point cliqué est d'abord converti des coordonnées scène vers le ViewBox
+        actif (spectre principal ou zoom) afin de récupérer (x, y). Ces valeurs
+        déplacent les lignes infinies, la croix de zoom et peuvent déclencher la
+        sélection d'un pic lorsque la case « clic = select pic » est cochée.
+        """
+        if mouse_event.button() != Qt.LeftButton:
+            return
+
+        pos = mouse_event.scenePos()
+
+        # --- déterminer sur quel plot on a cliqué ---
+        clicked_on_spec = self.pg_spectrum.sceneBoundingRect().contains(pos)
+        clicked_on_zoom = self.pg_zoom.sceneBoundingRect().contains(pos)
+
+        if not (clicked_on_spec or clicked_on_zoom):
+            return
+
+        if clicked_on_spec:
+            vb = self.pg_spectrum.getViewBox()
+        else:  # clicked_on_zoom
+            vb = self.pg_zoom.getViewBox()
+
+        mouse_point = vb.mapSceneToView(pos)
+        x = mouse_point.x()
+        y = mouse_point.y()
+
+        # Conversion scène -> axes du plot : x = position spectrale, y = intensité
+        self.X0, self.Y0 = x, y
+        self.vline.setPos(x)
+        self.hline.setPos(y)
+        self.cross_zoom.setData([x], [y])
+
+        # Si tu veux garder la logique "clic = sélectionner/placer un pic"
+        # → seulement quand on clique dans le spectre principal
+        if self.select_clic_box.isChecked() and clicked_on_spec:
+            try:
+                self._select_nearest_pic_from_x(x)
+            except Exception as e:
+                print("Error in _select_nearest_pic_from_x:", e)
+
+    def _select_nearest_pic_from_x(self, x):
+        if self.Spectrum is None or self.Param0 is None:
+            return
+
+        centers = []
+        indices = []
+
+        for i, Ljp in enumerate(self.Param0):
+            for j, Jp in enumerate(Ljp):
+                try:
+                    centers.append(float(Jp[0]))
+                    indices.append((i, j))
+                except Exception:
+                    pass
+
+        if not centers:
+            return
+
+        centers = np.array(centers)
+        k = np.argmin(np.abs(centers - x))
+        best_i, best_j = indices[k]
+        best_dx = abs(centers[k] - x)
+        # tolérance
+        wnb = getattr(self.Spectrum, "wnb", None)
+        if wnb is not None and len(wnb) > 1:
+            max_dx = (wnb[-1] - wnb[0]) / 10.0
+            if best_dx > max_dx:
+                return
+
+        # changement jauge
+        if best_i != self.index_jauge:
+
+            self.index_jauge = best_i
+
+            if 0 <= best_i < len(self.list_name_gauges):
+                gauge_name = self.list_name_gauges[best_i]
+                if gauge_name in self.liste_type_Gauge:
+                    self.Gauge_type_selector.setCurrentIndex(
+                        self.liste_type_Gauge.index(gauge_name)
+                    )
+
+            self.LOAD_Gauge()
+        if best_j != self.index_pic_select:
+            # sélection pic
+            self.index_pic_select = best_j
+            self.bit_bypass = True
+            try:
+                self.select_pic()
+            finally:
+                self.bit_bypass = False
+    def _refresh_spectrum_view(self):
+        """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
+
+        Les courbes de spectre, fit global, dérivée dY, baseline et FFT sont mises
+        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline, pg_fft).
+        La fonction ajuste aussi les limites de ViewBox et met à jour l'état local
+        (drapeau d'initialisation des limites) sans modifier la logique métier du
+        calcul du spectre.
+        """
+        S = self.Spectrum
+        if S is None:
+            # on vide tout
+            self.curve_spec_data.setData([], [])
+            self.curve_spec_fit.setData([], [])
+            self.curve_dy.setData([], [])
+            self.curve_baseline_brut.setData([], [])
+            self.curve_baseline_blfit.setData([], [])
+            self.curve_fft.setData([], [])
+            self.curve_zoom_data.setData([], [])
+            self.curve_zoom_data_brut.setData([], [])
+            self.curve_zoom_pic.setData([], [])
+            self.curve_spec_pic_select.setData([], [])
+            return
+
+        # --- On mémorise les X/Y du spectre principal pour les autres graphes ---
+        x_spec = None
+        y_spec = None
+
+        # 1) Spectre corrigé
+        if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
+            x = np.asarray(S.x_corr)
+            y = np.asarray(S.y_corr)
+            self.curve_spec_data.setData(x, y)
+
+            x_spec = x
+            y_spec = y
+
+            vb_spec = self.pg_spectrum.getViewBox()
+
+            # Contraindre les bornes de pan/zoom au spectre
+            self._set_viewbox_limits_from_data(vb_spec, x, y, padding=0.02)
+
+            # Centrer la vue sur les données seulement une fois
+            if not self._spectrum_limits_initialized:
+                try:
+                    vb_spec.setXRange(float(x[0]), float(x[-1]), padding=0.02)
+                except Exception as e:
+                    print("XRange error:", e)
+                self._spectrum_limits_initialized = True
+        else:
+            self.curve_spec_data.setData([], [])
+            # si pas de x_corr, on peut prendre wnb comme X de référence
+            if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "spec") and S.spec is not None:
+                x_spec = np.asarray(S.wnb)
+                y_spec = np.asarray(S.spec)
+
+        # 2) Fit global (somme des pics)
+        if hasattr(S, "y_fit") and S.y_fit is not None:
+            y_fit = np.asarray(S.y_fit)
+            if x_spec is not None and y_fit.shape == x_spec.shape:
+                self.curve_spec_fit.setData(x_spec, y_fit)
+            else:
+                # fallback : on prend wnb si dispo
+                if hasattr(S, "wnb") and S.wnb is not None:
+                    self.curve_spec_fit.setData(S.wnb, y_fit)
+        else:
+            self.curve_spec_fit.setData([], [])
+
+        # 3) dY
+        if hasattr(S, "dY") and S.dY is not None:
+            self.curve_dy.setData(S.wnb, S.dY)
+        else:
+            self.curve_dy.setData([], [])
+
+        # 4) Baseline
+        if hasattr(S, "spec") and S.spec is not None:
+            self.curve_baseline_brut.setData(S.wnb, S.spec)
+            vb_base = self.pg_baseline.getViewBox()
+            self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
+        else:
+            self.curve_baseline_brut.setData([], [])
+
+        if hasattr(S, "blfit") and S.blfit is not None:
+            self.curve_baseline_blfit.setData(S.wnb, S.blfit)
+        else:
+            self.curve_baseline_blfit.setData([], [])
+
+        # 5) FFT
+        if x_spec is not None and hasattr(S, "fft_amp") and S.fft_amp is not None:
+            vb_fft = self.pg_fft.getViewBox()
+            # On force les limites X avec x_spec, et Y avec fft_amp
+            # -> astuce : on donne x_data = x_spec, y_data = fft_amp
+            self._set_viewbox_limits_from_data(vb_fft, x_spec, S.fft_amp, padding=0.02)
+
+        # 6) Limites du graphe dY :
+        # X : mêmes que le spectre (x_spec)
+        # Y : dY
+        if x_spec is not None and hasattr(S, "dY") and S.dY is not None:
+            vb_dy = self.pg_dy.getViewBox()
+            # même astuce : x_data = x_spec, y_data = dY
+            self._set_viewbox_limits_from_data(vb_dy, x_spec, S.dY, padding=0.02)
+            self.pg_dy.setLimits(xMin=x_spec[0], xMax=x_spec[-1])
+
+    def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
+        """Contraint les limites d'un ViewBox en fonction des données visibles.
+
+        Le padding ajoute une marge relative autour des bornes min/max détectées
+        pour éviter de coller les courbes aux bords. Aucun calcul métier n'est
+        modifié : seules les limites de navigation (pan/zoom) sont recalculées.
+        """
+
+        if x_data is None:
+            return
+
+        x = np.asarray(x_data)
+        if x.size == 0:
+            return
+
+        x_min = float(np.nanmin(x))
+        x_max = float(np.nanmax(x))
+
+        if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+            return
+
+        span_x = x_max - x_min
+        x0 = x_min - span_x * padding
+        x1 = x_max + span_x * padding
+
+        if y_data is not None:
+            y = np.asarray(y_data)
+            if y.size > 0:
+                y_min = float(np.nanmin(y))
+                y_max = float(np.nanmax(y))
+                if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
+                    span_y = y_max - y_min
+                    y0 = y_min - span_y * padding
+                    y1 = y_max + span_y * padding
+                else:
+                    y0 = y_min
+                    y1 = y_max
+            else:
+                y0 = None
+                y1 = None
+        else:
+            y0 = y1 = None
+
+        if y0 is not None and y1 is not None:
+            vb.setLimits(xMin=x0, xMax=x1, yMin=y0, yMax=y1)
+        else:
+            vb.setLimits(xMin=x0, xMax=x1)
+
+    def _update_gauge_peaks_background(self):
+        """Dessine en fond du spectre la contribution de chaque pic de jauge.
+
+        Les zones remplies utilisent les couleurs définies sur chaque jauge
+        (G.color_print) et sont forcées derrière les courbes principales afin de
+        faciliter la lecture. Aucune donnée n'est modifiée, seul l'habillage
+        graphique du `pg_spectrum` est mis à jour.
+        """
+
+        if hasattr(self, "gauge_peak_items"):
+            for it in self.gauge_peak_items:
+                try:
+                    self.pg_spectrum.removeItem(it)
+                except Exception:
+                    pass
+        else:
+            self.gauge_peak_items = []
+
+        S = self.Spectrum
+        if S is None:
+            return
+
+        if not hasattr(S, "wnb") or S.wnb is None:
+            return
+        x = np.asarray(S.wnb, dtype=float)
+        if x.size == 0:
+            return
+
+        if not self.list_y_fit_start or not S.Gauges:
+            return
+
+        new_items = []
+
+        for j, G in enumerate(S.Gauges):
+            colors_for_peaks = None
+            if hasattr(G, "color_print") and isinstance(G.color_print, (list, tuple)) and len(G.color_print) > 1:
+                colors_for_peaks = G.color_print[1]
+
+            if j >= len(self.list_y_fit_start):
+                continue
+            list_peaks_j = self.list_y_fit_start[j]
+            if not list_peaks_j:
+                continue
+
+            for i, y_pic in enumerate(list_peaks_j):
+                if y_pic is None:
+                    continue
+
+                y_pic = np.asarray(y_pic, dtype=float)
+                if y_pic.size != x.size:
+                    continue
+
+                if colors_for_peaks and i < len(colors_for_peaks):
+                    col = colors_for_peaks[i]
+                    brush = pg.mkBrush(col)
+                    c = brush.color()
+                    c.setAlpha(80)
+                    brush = c
+                else:
+                    brush = (200, 200, 50, 60)
+
+                item = self.pg_spectrum.plot(
+                    x,
+                    y_pic,
+                    pen=None,
+                    fillLevel=0,
+                    brush=brush,
+                )
+                item.setZValue(-5)
+                new_items.append(item)
+
+        self.gauge_peak_items = new_items
+
+    def Baseline_spectrum(self):
+        param = [float(self.param_filtre_1_entry.text()), float(self.param_filtre_2_entry.text())]
+        if self.filtre_type_selector.currentText() == "svg":
+            param[0], param[1] = int(param[0]), int(param[1])
+
+        self.Spectrum.Data_treatement(
+            deg_baseline=int(self.deg_baseline_entry.value()),
+            type_filtre=self.filtre_type_selector.currentText(),
+            param_f=param,
+            print_data=False  # plus besoin de passer ax=ax_baseline, ax2=ax_fft
+        )
+        self._recompute_y_fit_start()   # somme des pics
+        self._refresh_spectrum_view()
+
+    def Auto_pic_fit(self):
+        """Auto-pic fit : boucle sur tous les pics de toutes les jauges, sans Matplotlib."""
+        save_jauge = self.index_jauge
+        save_pic = self.index_pic_select
+
+        for _ in range(self.spinbox_cycle.value()):
+            indices = [
+                (i, j)
+                for i in range(len(self.list_y_fit_start))
+                for j in range(len(self.list_y_fit_start[i]))
+            ]
+            sample_indices = random.sample(indices, len(indices))
+
+            for Indx in sample_indices:
+                self.index_jauge, self.index_pic_select = Indx
+                out, X_pic, _, bit = self.f_pic_fit()
+                if bit:
+                    y_plot = out.best_fit
+                else:
+                    p = out.make_params()
+                    y_plot = X_pic.model.eval(p, x=self.Spectrum.wnb)
+
+                self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot
+                self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
+                new_name = (
+                    self.Nom_pic[self.index_jauge][self.index_pic_select]
+                    + "   X0:"
+                    + str(self.Param0[self.index_jauge][self.index_pic_select][0])
+                    + "   Y0:"
+                    + str(self.Param0[self.index_jauge][self.index_pic_select][1])
+                    + "   sigma:"
+                    + str(self.Param0[self.index_jauge][self.index_pic_select][2])
+                    + "   Coef:"
+                    + str(self.Param0[self.index_jauge][self.index_pic_select][3])
+                    + " ; Modele:"
+                    + str(self.Param0[self.index_jauge][self.index_pic_select][4])
+                )
+                self.list_text_pic[self.index_jauge][self.index_pic_select] = str(new_name)
+
+        self.index_jauge = save_jauge
+        self.index_pic_select = save_pic
+        self.LOAD_Gauge()
+        self.Print_fit_start()
+    def Update_var(self,name=None):
+        self.list_name_gauges.append(name)
+        self.Nom_pic.append([])
+        self.Spec_fit.append(None)
+        self.Param0.append([])
+        self.Param_FIT.append([])
+        self.J.append(0) #Compteur du nombre d epic selectioné
+        self.X0=0 #cordonnée X du clique
+        self.Y0=0 #cordonnée Y du clique [None)
+        self.X_s.append(None) #X de départ de donné selectioné
+        self.X_e.append(None) #X de fin de ddonné selectionéinter_entryself.
+        self.z1.append(None) #afficahge de la zone enlver au debut
+        self.z2.append(None) #afficahge de la zone enlver a la fin
+        self.Zone_fit.append(None)
+        self.bit_plot_fit.append(False) # True les fit son affiché sinon False
+        self.plot_fit.append(None)
+        self.plot_pic.append([]) #plot des fit
+        self.list_text_pic.append([]) # texte qui donne les different pic enregistré
+        self.bit_fit.append(True)
+        self.plot_pic_fit.append([])
+        self.list_y_fit_start.append([])
+
+    def Auto_pic(self): # - - - AUTO PIC- - -#
+        #ALLER VORIE DANS FD_DRX POUR REFAIRE
+        if self.index_jauge==-1:
+            return print("Auto_pic bug resolve : if self.index_jauge==-1")
+        if self.Spectrum.Gauges[self.index_jauge].lamb_fit is not None:
+            x0=self.Spectrum.Gauges[self.index_jauge].lamb_fit
+        else:
+            x0=self.Spectrum.Gauges[self.index_jauge].lamb0
+        for i,p in enumerate(self.Spectrum.Gauges[self.index_jauge].pics):
+            self.X0=x0+self.Spectrum.Gauges[self.index_jauge].deltaP0i[i][0]
+            m=np.argmin(np.abs(self.Spectrum.x_corr -self.X0 ))
+            self.Y0=round(self.Spectrum.y_corr[m],3)
+            self.Nom_pic[self.index_jauge].insert(i,self.list_name_gauges[self.index_jauge] +'_p'+str(i+1))
+            self.Param0[self.index_jauge].insert(i,i)
+            self.list_text_pic[self.index_jauge].insert(i,i)
+            self.list_y_fit_start[self.index_jauge].insert(i,i)
+            self.plot_pic_fit[self.index_jauge].insert(i,"pic_fit")
+            self.listbox_pic.insertItem(self.J[self.index_jauge]-1,str(i))
+            self.J[self.index_jauge]+=1
+            self.index_pic_select=i
+            self.Param0[self.index_jauge][self.index_pic_select]=[self.X0,self.Y0,float(p.sigma[0]),np.array([float(x[0]) for x in p.coef_spe]),str(p.model_fit) ]
+            self.bit_bypass=True
+            self.Replace_pic()
+            self.bit_bypass=False
+
+        self.Spectrum.bit_fit=False
+        self.Spectrum.Gauges[self.index_jauge].bit_fit =False
+        self.select_pic()
+
+    def Click_Confirme(self): # Fonction qui confirme le choix du pic et qui passe au suivant
+        if  "DRX" in (self.Spectrum.Gauges[self.index_jauge].spe or self.Spectrum.Gauges[self.index_jauge].name_spe): #a travailler !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            n=1
+            while n <= self.J[self.index_jauge] and n < self.Spectrum.Gauges[self.index_jauge].nb_pic :
+                n+=1
+            self.Nom_pic[self.index_jauge].append(self.list_name_gauges[self.index_jauge] +'_'+self.Spectrum.Gauges[self.index_jauge].Element_ref.name_dhkl[i]+'_')
+        else:
+            self.Nom_pic[self.index_jauge].append(self.list_name_gauges[self.index_jauge] +'_p'+str(self.J[self.index_jauge])+'_')
+
+        self.Param0[self.index_jauge].append([self.X0,self.Y0,float(self.spinbox_sigma.value()),np.array([float(spin.value()) for spin in self.coef_dynamic_spinbox]),str(self.model_pic_fit)])
+        new_name= str(self.Nom_pic[self.index_jauge][-1]) + "   X0:"+str(self.Param0[self.index_jauge][-1][0])+"   Y0:"+ str(self.Param0[self.index_jauge][-1][1]) + "   sigma:" + str(self.Param0[self.index_jauge][-1][2]) + "   Coef:" + str(self.Param0[self.index_jauge][-1][3]) +" ; Modele:" + str(self.Param0[self.index_jauge][-1][4])
+        self.J[self.index_jauge]+=1
+        self.text_box_msg.setText('Parametre initiale pic'+str(self.J[self.index_jauge])+': \n VIDE')
+        self.list_text_pic[self.index_jauge].append(str(new_name))
+        self.listbox_pic.insertItem(self.J[self.index_jauge]-1,new_name)
+
+        X_pic=CL.Pics(name=self.Nom_pic[self.index_jauge][-1],ctr=self.Param0[self.index_jauge][-1][0],ampH=self.Param0[self.index_jauge][-1][1],coef_spe=self.Param0[self.index_jauge][-1][3],sigma=self.Param0[self.index_jauge][-1][2],model_fit=self.Param0[self.index_jauge][-1][4])
+        params=X_pic.model.make_params()
+        y_plot=X_pic.model.eval(params,x=self.Spectrum.wnb)#+self.Spectrum.blfit
+
+        self.list_y_fit_start[self.index_jauge].append(y_plot)
+
+        self.Print_fit_start()
+
+        self.plot_pic_fit[self.index_jauge].append(
+            self.pg_spectrum.plot(
+                self.Spectrum.wnb, y_plot,
+                pen=None,
+                fillLevel=float(np.nanmin(y_plot)),
+                brush=pg.mkBrush(self.Spectrum.Gauges[self.index_jauge].color_print[0])
+            )
+        )
+        self.Spectrum.Gauges[self.index_jauge].pics.append(X_pic)
+
+    def Click_Zone(self):
+        """Définit / efface la zone de fit pour la jauge courante, sans tracés Matplotlib."""
+        if self.index_jauge == -1 or self.Spectrum is None:
+            print("Zone bug resolve : no gauge selected")
+            return
+
+        j = self.index_jauge
+        x_click = float(self.X0)
+
+        # Cas 1 : aucune zone définie -> on pose X_s
+        if self.Zone_fit[j] is None and self.X_s[j] is None:
+            self.X_s[j] = x_click
+            self.text_box_msg.setText("Zone 1")
+            return
+
+        # Cas 2 : X_s existe mais pas X_e -> on pose X_e + on calcule Zone_fit
+        if self.Zone_fit[j] is None and self.X_e[j] is None:
+            if x_click < self.X_s[j]:
+                self.text_box_msg.setText("X_end < X_start -> ignored")
+                return
+
+            self.X_e[j] = x_click
+            self.Zone_fit[j] = np.where(
+                (self.Spectrum.wnb >= self.X_s[j]) &
+                (self.Spectrum.wnb <= self.X_e[j])
+            )[0]
+
+            # On mémorise la zone dans la jauge
+            self.Spectrum.Gauges[j].indexX = self.Zone_fit[j]
+
+            # Si c'est la jauge 0 et que la box "zone_spectrum" est cochée,
+            # on applique aussi au spectre global
+            if j == 0 and self.zone_spectrum_box.isChecked():
+                self.Spectrum.indexX = self.Zone_fit[0]
+                self.Spectrum.x_corr = self.Spectrum.wnb[self.Zone_fit[0]]
+            else:
+                # zone_jauge seule, on laisse indexX global comme il est
+                pass
+
+            # Re-traitement des données avec la nouvelle zone
+            self.Baseline_spectrum()
+            self.text_box_msg.setText("Zone 2")
+            return
+
+        # Cas 3 : une zone est déjà définie -> on la supprime
+        self.X_s[j] = None
+        self.X_e[j] = None
+        self.Zone_fit[j] = None
+        self.Spectrum.Gauges[j].indexX = None
+
+        if j == 0 and self.zone_spectrum_box.isChecked():
+            self.Spectrum.indexX = None
+            self.Spectrum.x_corr = self.Spectrum.wnb
+
+        self.Baseline_spectrum()
+        self.text_box_msg.setText("Zone Clear")
+
+    def Click_Clear(self):
+        """Efface tous les pics et la zone de fit de la jauge courante, sans manip Matplotlib."""
+        if self.index_jauge == -1:
+            print("Clear resolve : pas de jauge")
+            return
+
+        j = self.index_jauge
+
+        # Reset des infos de pics pour cette jauge
+        self.Nom_pic[j] = []
+        self.J[j] = 0
+        self.X0 = 0
+        self.Y0 = 0
+        self.list_text_pic[j] = []
+
+        # Zone de fit
+        self.X_s[j] = None
+        self.X_e[j] = None
+        self.Zone_fit[j] = None
+        self.Spectrum.Gauges[j].indexX = None
+
+        # Paramètres et modèles
+        self.Param0[j] = []
+        self.Spectrum.Gauges[j].pics = []
+        try:
+            self.Param_FIT[j] = []
+        except Exception as e:
+            print("Param_FIT[J]=[]", e)
+
+        # Courbes associées
+        self.list_y_fit_start[j] = []
+
+        # UI
+        self.listbox_pic.clear()
+        self.text_box_msg.setText("GL&HF")
+
+        # Filtre éventuel
+        if self.bit_filtre and hasattr(self, "filtre_OFF"):
+            self.filtre_OFF()
+            self.bit_filtre = False
+
+        # Recalcul global des résidus + mise à jour des graphes PyQtGraph
+        self.Print_fit_start()
+
+    def _recompute_y_fit_start(self):
+        """Recale self.y_fit_start à partir de list_y_fit_start."""
+        self.y_fit_start = None
+        if not any(self.list_y_fit_start):
+            return
+
+        for i, l in enumerate(self.list_y_fit_start):
+            for j, y in enumerate(l):
+                if self.y_fit_start is None:
+                    self.y_fit_start = y.copy()
+                else:
+                    self.y_fit_start = self.y_fit_start + y
+
+        if self.Spectrum is not None:
+            if self.Spectrum.indexX is not None:
+                self.Spectrum.dY = self.Spectrum.y_corr[self.Spectrum.indexX] - self.y_fit_start[self.Spectrum.indexX]
+            else:
+                self.Spectrum.dY = self.Spectrum.y_corr - self.y_fit_start
+
+    def Print_fit_start(self):
+        # simple wrapper UI
+        if self.fit_start_box.isChecked():
+            self._recompute_y_fit_start()
+        else:
+            #self.y_fit_start = None
+            if self.Spectrum is not None:
+                self.Spectrum.dY = self.Spectrum.y_corr
+        self._refresh_spectrum_view()
+
+    def Undo_pic(self):
+        if self.J[self.index_jauge] >0:
+            del(self.Nom_pic[self.index_jauge][-1])
+            del(self.Param0[self.index_jauge][-1])
+            del(self.Spectrum.Gauges[self.index_jauge].pics[-1])
+            self.text_box_msg.setText('Parametre initiale pic'+str(self.J[self.index_jauge])+': \n VIDE')
+            del(self.list_text_pic[self.index_jauge][-1])
+            self.J[self.index_jauge]-=1
+            self.listbox_pic.takeItem(self.J[self.index_jauge])
+            try:
+                self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][-1])
+            except Exception:
+                pass
+            del(self.plot_pic_fit[self.index_jauge][-1])
+            self.text_box_msg.setText('UNDO PIC')
+            del(self.list_y_fit_start[self.index_jauge][-1])
+            self.Print_fit_start()
+
+    def Undo_pic_select(self):
+        if self.index_pic_select is not None:
+            name=self.listbox_pic.item(self.index_pic_select).text()
+            #motif = r'_p(\d+)_'(continued)
+            #matches = re.findall(motif, name)
+            #self.index_pic_select=int(matches[0])
+            if self.J[self.index_jauge] >0:
+                self.text_box_msg.setText('PIC'+ self.Nom_pic[self.index_jauge][self.index_pic_select] +' DELETED')
+                del(self.Nom_pic[self.index_jauge][self.index_pic_select])
+                del(self.Param0[self.index_jauge][self.index_pic_select])
+                self.text_box_msg.setText('PIC'+str(self.J[self.index_jauge])+': \n VIDE')
+                del(self.list_text_pic[self.index_jauge][self.index_pic_select])
+                self.J[self.index_jauge]-=1
+                self.listbox_pic.takeItem(self.index_pic_select)
+                try:
+                    self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
+                except Exception:
+                    pass
+                del(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
+                del(self.list_y_fit_start[self.index_jauge][self.index_pic_select])
+                del(self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select])
+                self.Print_fit_start()
+    def select_pic(self):
+        if not self.bit_bypass:
+            self.index_pic_select = self.listbox_pic.currentRow()
+            if self.index_pic_select < 0:
+                return
+
+        # Mise à jour X0/Y0
+        self.X0 = self.Param0[self.index_jauge][self.index_pic_select][0]
+        self.Y0 = self.Param0[self.index_jauge][self.index_pic_select][1]
+
+        # sigma + modèle
+        self.spinbox_sigma.setValue(
+            self.Param0[self.index_jauge][self.index_pic_select][2]
+        )
+        self.model_pic_fit = self.Param0[self.index_jauge][self.index_pic_select][4]
+        for i, model in enumerate(self.liste_type_model_pic):
+            if model == self.model_pic_fit:
+                self.model_pic_type_selector.setCurrentIndex(i)
+                break
+
+        # Coeffs spé
+        self.bit_bypass = True
+        self.f_model_pic_type()
+        self.bit_bypass = False
+        for i, spin in enumerate(self.coef_dynamic_spinbox):
+            spin.setValue(self.Param0[self.index_jauge][self.index_pic_select][3][i])
+
+        self.text_box_msg.setText(
+            "PIC SELECT " + self.Nom_pic[self.index_jauge][self.index_pic_select]
+        )
+
+        # ------------- Données de zoom & pic sélectionné -------------
+        S = self.Spectrum
+
+        y_pic = None
+
+        if (
+            self.index_jauge >= 0
+            and self.index_pic_select >= 0
+            and self.list_y_fit_start
+            and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select
+        ):
+            y_pic = self.list_y_fit_start[self.index_jauge][self.index_pic_select]
+            self.curve_zoom_pic.setData(S.wnb, y_pic)
+            self.curve_spec_pic_select.setData(S.wnb, y_pic)
+            self.curve_zoom_data.setData(S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
+            self.curve_zoom_data_brut.setData(S.wnb, S.spec- S.blfit)
+        else:
+            self.curve_zoom_pic.setData([], [])
+            self.curve_spec_pic_select.setData([], [])
+            if hasattr(S, "wnb") and hasattr(S, "spec"):
+                self.curve_zoom_data.setData(S.wnb, S.spec)
+                self.curve_zoom_data_brut.setData(S.wnb, S.spec)
+            else:
+                self.curve_zoom_data.setData([], [])
+                self.curve_zoom_data_brut.setData([], [])
+
+        # ------------- Limites du ZOOM : basées sur le pic sélectionné -------------
+        if hasattr(S, "wnb") and S.wnb is not None:
+            xz = np.asarray(S.wnb)
+
+            if y_pic is not None:
+                y_zoom = np.asarray(y_pic, dtype=float)
+
+                # Option : ne zoomer que sur la zone où le pic est significatif
+                # par exemple là où y_pic > 10% du max
+                mask = y_zoom > (0.1 * np.nanmax(y_zoom))
+                if np.any(mask):
+                    xz_zoom = xz[mask]
+                    yz_zoom = y_zoom[mask]
+                else:
+                    # fallback : tout le spectre
+                    xz_zoom = xz
+                    yz_zoom = y_zoom
+            else:
+                # Pas de pic -> zoom sur le brut
+                if hasattr(S, "spec") and S.spec is not None:
+                    xz_zoom = xz
+                    yz_zoom = np.asarray(S.spec, dtype=float)
+                else:
+                    xz_zoom = xz
+                    yz_zoom = xz  # fallback bidon, mais ne devrait pas arriver
+
+            vb_zoom = self.pg_zoom.getViewBox()
+
+            # On ne garde PLUS le "une seule fois" : on veut que le zoom s'adapte
+            # à chaque sélection de pic, donc pas de _zoom_limits_initialized ici.
+            self._set_viewbox_limits_from_data(vb_zoom, xz_zoom, yz_zoom, padding=0.5)
+
+            try:
+                vb_zoom.setXRange(float(np.nanmin(xz_zoom)), float(np.nanmax(xz_zoom)), padding=0.1)
+            except Exception as e:
+                print("Zoom XRange error:", e)
+
+    def _build_full_y_plot(self, y_partial, indexX):
+        total_len = getattr(self.Spectrum, "n", None)
+        if total_len is None:
+            x_data = getattr(self.Spectrum, "wnb", None)
+            if x_data is not None:
+                total_len = len(x_data)
+
+        if total_len is None:
+            return np.asarray(y_partial) if y_partial is not None else np.array([])
+
+        if y_partial is None:
+            return np.zeros(total_len)
+
+        y_partial = np.asarray(y_partial, dtype=float)
+        if len(y_partial) == total_len:
+            return y_partial
+
+        y_full = np.zeros(total_len)
+        if indexX is not None and len(indexX) == len(y_partial):
+            y_full[indexX] = y_partial
+        else:
+            # Fallback: copy what we can.
+            y_full[: min(total_len, len(y_partial))] = y_partial[: min(total_len, len(y_partial))]
+        return y_full
+
+    def _clear_selected_peak_overlay(self):
+        """Clear the overlay curves highlighting the selected peak."""
+
+        try:
+            self.curve_spec_pic_select.setData([], [])
+            self.curve_zoom_pic.setData([], [])
+        except Exception:
+            pass
+    def Replace_pic(self):
+        if (
+            self.Spectrum is None
+            or self.index_jauge is None
+            or self.index_pic_select is None
+            or self.index_jauge < 0
+            or self.index_pic_select < 0
+        ):
+            return
+
+        if (
+            self.index_jauge >= len(self.Param0)
+            or self.index_jauge >= len(self.Nom_pic)
+            or self.index_pic_select >= len(self.Param0[self.index_jauge])
+            or self.index_pic_select >= len(self.Nom_pic[self.index_jauge])
+            or not hasattr(self.Spectrum, "Gauges")
+            or self.index_jauge >= len(self.Spectrum.Gauges)
+            or self.index_pic_select >= len(self.Spectrum.Gauges[self.index_jauge].pics)
+        ):
+            return
+
+        if not self.bit_bypass:
+            self.Param0[self.index_jauge][self.index_pic_select] = [
+                self.X0,
+                self.Y0,
+                float(self.spinbox_sigma.value()),
+                np.array([float(spin.value()) for spin in self.coef_dynamic_spinbox]),
+                str(self.model_pic_fit),
+            ]
+        else:
+            self.Param0[self.index_jauge][self.index_pic_select][0] = self.X0
+            self.Param0[self.index_jauge][self.index_pic_select][1] = self.Y0
+
+        new_name = (
+            self.Nom_pic[self.index_jauge][self.index_pic_select]
+            + "   X0:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][0])
+            + "   Y0:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][1])
+            + "   sigma:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][2])
+            + "   Coef:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][3])
+            + " ; Modele:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][4])
+        )
+        self.list_text_pic[self.index_jauge][self.index_pic_select] = str(new_name)
+        self.listbox_pic.takeItem(self.index_pic_select)
+        self.listbox_pic.insertItem(self.index_pic_select, str(new_name))
+        self.text_box_msg.setText(
+            "PIC " + self.Nom_pic[self.index_jauge][self.index_pic_select] + " REPLACE"
+        )
+
+        X_pic = CL.Pics(
+            name=self.Nom_pic[self.index_jauge][self.index_pic_select],
+            ctr=self.Param0[self.index_jauge][self.index_pic_select][0],
+            ampH=self.Param0[self.index_jauge][self.index_pic_select][1],
+            coef_spe=self.Param0[self.index_jauge][self.index_pic_select][3],
+            sigma=self.Param0[self.index_jauge][self.index_pic_select][2],
+            model_fit=self.Param0[self.index_jauge][self.index_pic_select][4],
+        )
+        x_eval = getattr(self.Spectrum, "wnb", None)
+        params = X_pic.model.make_params()
+        y_plot = X_pic.model.eval(params, x=x_eval) if x_eval is not None else np.array([])
+
+        y_plot_full = self._build_full_y_plot(y_plot, None)
+
+        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot_full
+        self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
+
+        self.Print_fit_start()
+
+        x_data = getattr(self.Spectrum, "wnb", np.array([]))
+        self.curve_zoom_pic.setData(x_data, y_plot_full)
+
+        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
+            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
+            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec- self.Spectrum.blfit)
+        self._update_fit_window()
+        # Option : ne zoomer que sur la zone où le pic est significatif
+        # par exemple là où y_pic > 10% du max
+        mask = y_plot_full > (0.1 * np.nanmax(y_plot_full))
+        if np.any(mask):
+            xz_zoom = x_data[mask]
+            yz_zoom = y_plot_full[mask]
+        else:
+            # fallback : tout le spectre
+            xz_zoom = x_data
+            yz_zoom = y_plot_full
+        vb_zoom = self.pg_zoom.getViewBox()
+
+        # On ne garde PLUS le "une seule fois" : on veut que le zoom s'adapte
+        # à chaque sélection de pic, donc pas de _zoom_limits_initialized ici.
+        self._set_viewbox_limits_from_data(vb_zoom, xz_zoom, yz_zoom, padding=0.5)
+
+        try:
+            vb_zoom.setXRange(float(np.nanmin(xz_zoom)), float(np.nanmax(xz_zoom)), padding=0.1)
+        except Exception as e:
+            print("Zoom XRange error:", e)
+
+
+    def Replace_pic_fit(self):
+        if (
+            self.Spectrum is None
+            or self.index_jauge is None
+            or self.index_pic_select is None
+            or self.index_jauge < 0
+            or self.index_pic_select < 0
+        ):
+            return
+
+        if (
+            self.index_jauge >= len(self.Param0)
+            or self.index_jauge >= len(self.Nom_pic)
+            or self.index_pic_select >= len(self.Param0[self.index_jauge])
+            or self.index_pic_select >= len(self.Nom_pic[self.index_jauge])
+            or not hasattr(self.Spectrum, "Gauges")
+            or self.index_jauge >= len(self.Spectrum.Gauges)
+            or self.index_pic_select >= len(self.Spectrum.Gauges[self.index_jauge].pics)
+        ):
+            return
+
+        out, X_pic, indexX, bit = self.f_pic_fit()
+        if not bit:
+            self.text_box_msg.setText(
+                "PIC FIT " + self.Nom_pic[self.index_jauge][self.index_pic_select] + " PARAM ERROR"
+            )
+            return
+
+        new_name = (
+            self.Nom_pic[self.index_jauge][self.index_pic_select]
+            + "   X0:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][0])
+            + "   Y0:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][1])
+            + "   sigma:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][2])
+            + "   Coef:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][3])
+            + " ; Modele:"
+            + str(self.Param0[self.index_jauge][self.index_pic_select][4])
+        )
+        self.list_text_pic[self.index_jauge][self.index_pic_select] = str(new_name)
+        self.listbox_pic.takeItem(self.index_pic_select)
+        self.listbox_pic.insertItem(self.index_pic_select, str(new_name))
+        self.text_box_msg.setText(
+            "PIC FIT " + self.Nom_pic[self.index_jauge][self.index_pic_select] + " REPLACE"
+        )
+
+        if bit:
+            y_plot = out.best_fit
+            p = out.params
+        else:
+            p = out.make_params()
+            x_eval = getattr(self.Spectrum, "wnb", None)
+            y_plot = X_pic.model.eval(p, x=x_eval) if x_eval is not None else np.array([])
+
+        y_plot_full = self._build_full_y_plot(y_plot, indexX)
+
+        self.list_y_fit_start[self.index_jauge][self.index_pic_select] = y_plot_full
+        self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select] = X_pic
+
+        self.Print_fit_start()
+
+        x_data = getattr(self.Spectrum, "wnb", np.array([]))
+        self.curve_zoom_pic.setData(x_data, y_plot_full)
+
+        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
+            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
+            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec - self.Spectrum.blfit)
+        self._update_fit_window()
+        # Option : ne zoomer que sur la zone où le pic est significatif
+        # par exemple là où y_pic > 10% du max
+        mask = y_plot_full > (0.1 * np.nanmax(y_plot_full))
+        if np.any(mask):
+            xz_zoom = x_data[mask]
+            yz_zoom = y_plot_full[mask]
+        else:
+            # fallback : tout le spectre
+            xz_zoom = x_data
+            yz_zoom = y_plot_full
+        vb_zoom = self.pg_zoom.getViewBox()
+
+        # On ne garde PLUS le "une seule fois" : on veut que le zoom s'adapte
+        # à chaque sélection de pic, donc pas de _zoom_limits_initialized ici.
+        self._set_viewbox_limits_from_data(vb_zoom, xz_zoom, yz_zoom, padding=0.5)
+
+        try:
+            vb_zoom.setXRange(float(np.nanmin(xz_zoom)), float(np.nanmax(xz_zoom)), padding=0.1)
+        except Exception as e:
+            print("Zoom XRange error:", e)
+
+
+    def LOAD_Spectrum(self, item=None, Spectrum=None):
+        """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
+        save_index_spec = -1
+        old_spectrum = self.Spectrum
+        nb_j_old = len(old_spectrum.Gauges) if old_spectrum is not None else 0
+
+        self._clear_selected_peak_overlay()
+        bypass = False  # valeur par défaut
+
+        # =========================
+        # 1) Sélection de Spectrum
+        # =========================
+        if Spectrum is None:
+            # On vient de l'UI (spinner / listbox)
+            if not self.bit_bypass and old_spectrum is not None:
+                # On sauvegarde le spectre courant dans le RUN (si possible)
+                try:
+                    self.RUN.Spectra[self.index_spec] = old_spectrum
+                except Exception:
+                    self.text_box_msg.setText("ERROR Load Spec")
+                    return
+
+                save_index_spec = self.spinbox_spec_index.value()
+
+            # Choix de l'index de spectre cible
+            if save_index_spec >= 0:
+                target_index = save_index_spec
+            else:
+                target_index = self.index_spec
+
+            # Si on change réellement de spectre
+            if target_index != self.index_spec:
+                if not self.bit_bypass:
+                    self.index_spec = target_index
+
+            # Nouveau spectre de référence
+            try:
+                new_spec = self.RUN.Spectra[self.index_spec]
+            except (AttributeError, IndexError, TypeError):
+                self.text_box_msg.setText("ERROR: invalid spectrum index")
+                return
+
+            new_has_fit = getattr(new_spec, "bit_fit", False)
+            old_has_fit = getattr(old_spectrum, "bit_fit", False) if old_spectrum is not None else False
+
+            if new_has_fit:
+                # On prend directement le spectre du RUN (déjà fitté)
+                self.Spectrum = new_spec
+            elif old_has_fit:
+                # On garde les paramètres de fit de l'ancien, mais on remplace jauges/modèle
+                save_J = copy.deepcopy(new_spec.Gauges)
+                save_M = copy.deepcopy(new_spec.model)
+                self.Spectrum = copy.deepcopy(old_spectrum)
+                self.Spectrum.Gauges = save_J
+                self.Spectrum.model = save_M
+                bypass = True
+            else:
+                # Pas de fit ni dans l'ancien, ni dans le nouveau : simple copie
+                self.Spectrum = copy.deepcopy(new_spec)
+
+        else:
+            # Chargement direct d'un objet Spectre
+            self.Spectrum = Spectrum
+            bypass = True
+            self.bit_bypass = False
+
+        S = self.Spectrum
+        if S is None:
+            self.text_box_msg.setText("ERROR: no Spectrum loaded")
+            return
+
+        # =========================================
+        # 2) Réinitialise toute la structure de fit
+        # =========================================
+        has_global_fit = getattr(S, "bit_fit", False)
+        has_gauge_fit = any(getattr(G, "bit_fit", False) for G in getattr(S, "Gauges", []))
+
+        if has_global_fit or bypass or self.bit_bypass or has_gauge_fit:
+            nb_j = len(S.Gauges) if S.Gauges is not None else 0
+            self.Zone_fit = [None for _ in range(nb_j)]
+            self.X_s = [None for _ in range(nb_j)]
+            self.X_e = [None for _ in range(nb_j)]
+            self.bit_fit = [False for _ in range(nb_j)]
+
+            # Gestion des zones de fit : uniquement logique (plus de remplissage Matplotlib)
+            if getattr(S, "indexX", None) is not None:
+                for i in range(nb_j):
+                    self.Zone_fit[i] = S.indexX
+                    self.Spectrum.Gauges[i].indexX = self.Zone_fit[i]
+
+            # jauges / pics
+            self.list_name_gauges = []
+            self.Param0 = []
+            self.Param_FIT = []
+            self.Nom_pic = []
+            self.list_text_pic = []
+            self.J = []
+            self.Spec_fit = []
+            self.plot_fit = []
+            self.plot_pic = []
+            self.plot_pic_fit = []
+            self.list_y_fit_start = []
+            self.z1 = []
+            self.z2 = []
+            self.y_fit_start = None
+
+            self.listbox_pic.clear()
+
+            # Reconstruction à partir de S.Gauges
+            if getattr(S, "Gauges", None) is not None:
+                for J in S.Gauges:
+                    self.Update_var(J.name)
+
+                for i, J in enumerate(S.Gauges):
+                    self.z1[i] = J.x[0]
+                    self.z2[i] = J.x[-1]
+
+                    self.list_text_pic[i].clear()
+                    self.J[i] = 0
+                    self.listbox_pic.clear()
+
+                    # Si la jauge a déjà des pics, on les transfère
+                    if getattr(J, "pics", None):
+                        for p in J.pics:
+                            try:
+                                coeffs = np.array([float(x[0]) for x in p.coef_spe])
+                            except Exception:
+                                coeffs = np.array([])
+
+                            self.Nom_pic[i].append(p.name)
+                            self.Param0[i].append([
+                                p.ctr,
+                                p.ampH,
+                                p.sigma,
+                                coeffs,
+                                p.model_fit,
+                            ])
+                            new_name = (
+                                f"{self.Nom_pic[i][-1]}   X0:{p.ctr}   Y0:{p.ampH}"
+                                f"   sigma:{p.sigma}   Coef:{coeffs} ; Modele:{p.model_fit}"""
+                            )
+                            self.list_text_pic[i].append(new_name)
+                            self.listbox_pic.addItem(new_name)
+                            self.J[i] += 1
+
+                            # stockage courbes y_fit_start :
+                            if getattr(S, "y_fit", None) is not None:
+                                # on reconstruit y_fit_start pour chaque pic en retirant le reste
+                                try:
+                                    y_pic = p.model.eval(p.model.make_params(), x=S.wnb)
+                                    self.list_y_fit_start[i].append(y_pic)
+                                except Exception:
+                                    self.list_y_fit_start[i].append(None)
+
+                        if getattr(J, "lamb_fit", None) is not None:
+                            self.spinbox_P.setValue(J.P)
+                            self.lamb0_entry.setText(str(J.lamb_fit))
+                            self.name_gauge.setText("Fit")
+                            self.bit_modif_jauge = True
+                            self.J[i] = J.nb_pic
+
+            # Fit total / y_fit_start
+            self.y_fit_start = getattr(S, "y_fit", None)
+
+            # Reconstruction index_zone
+            if getattr(S, "indexX", None) is not None:
+                self.Zone_fit[0] = S.indexX
+                self.X_s[0] = S.wnb[S.indexX][0]
+                self.X_e[0] = S.wnb[S.indexX][-1]
+
+            # --- Signatures fit ---
+            if hasattr(S, "bit_fit"):
+                self.bit_fit_T = S.bit_fit
+            if hasattr(S, "bit_print_fit"):
+                self.bit_print_fit_T = S.bit_print_fit
+
+            # On remplit listbox_pic avec la jauge 0 par défaut
+            self.listbox_pic.clear()
+            if getattr(self.list_text_pic, "__len__", None) and len(self.list_text_pic) > 0:
+                for txt in self.list_text_pic[0]:
+                    self.listbox_pic.addItem(txt)
+
+        self.name_gauge.setStyleSheet("background-color: green;")
+        self.Auto_pic()
+
+    def f_index_gauge(self,spec):
+        l_name = [ga.name for ga in spec.Gauges]
+        try:
+            index = l_name.index(self.Gauge_type_selector.currentText())
+            print(index)
+        except Exception:
+            index=None
+            self.Gauge_type_selector.setCurrentIndex(l_name.index(self.Gauge_type_selector.currentText()))
+        return index
+
+    def LOAD_Gauge(self):
+        """Charge la jauge `self.index_jauge` dans l'UI (sans Matplotlib)."""
+        self.bit_load_jauge = False
+        self.bit_modif_jauge = True
+
+        self._clear_selected_peak_overlay()
+
+        G = self.Spectrum.Gauges[self.index_jauge]
+
+        if G.name == "Ruby":
+            self.spinbox_T.setEnabled(True)
+        else:
+            self.spinbox_T.setEnabled(False)
+            self.spinbox_T.setValue(293)
+            self.deltalambdaT = 0
+
+        self.lamb0_entry.setText(str(G.lamb0))
+        self.name_spe_entry.setText(str(G.name_spe))
+        self.spinbox_P.setValue(G.P)
+
+        self.f_dell_lines()
+        self.f_p_move(G, value=G.P)
+
+        self.listbox_pic.clear()
+        for name in self.list_text_pic[self.index_jauge]:
+            self.listbox_pic.addItem(name)
+
+        self.Gauge_type_selector.setCurrentIndex(
+            self.liste_type_Gauge.index(G.name)
+        )
+        self.name_gauge.setText("In")
+        self.name_gauge.setStyleSheet("background-color: green;")
