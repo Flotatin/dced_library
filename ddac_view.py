@@ -225,7 +225,7 @@ class DdacViewMixin:
         self._zoom_limits_initialized = False
 
         # ================== FACTEURS DE LIGNES (2, 2, 1) ==================
-        self._ddac_row_factors = (3, 1, 1)
+        self._ddac_row_factors = (4, 1, 1)
         # exemple : colonne temps / colonne image de même largeur
         self._ddac_col_factors = (1, 1)
 
@@ -253,16 +253,14 @@ class DdacViewMixin:
         self.RUN = copy.deepcopy(state.ced)
         self.index_select = self.liste_objets_widget.row(state.list_item) if state.list_item is not None else -1
 
-        if hasattr(self.RUN, "fps") and self.RUN.fps is not None:
+        if hasattr(self.RUN,"fps") and self.RUN.fps is not None:
             try:
-                titre = "Movie :1e" + str(round(np.log10(self.RUN.fps), 2)) + "fps"
+                text_fps="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
             except Exception as e:
-                print("fps log ERROR:", e)
-                titre = "Movie :" + str(round(self.RUN.fps, 2)) + "fps"
+                print("fps log ERROR:",e)
+                text_fps="Movie :"+str(round(self.RUN.fps,2))+"fps"
         else:
-            titre = "No Movie"
-
-        self.setWindowTitle(titre)
+            text_fps="No Movie"
 
         if state.index_cam is not None and len(state.index_cam)>0:
             self.current_index = len(state.index_cam) // 2
@@ -278,7 +276,7 @@ class DdacViewMixin:
 
         self._update_movie_frame()
 
-        self.label_CED.setText("CEDd " + name_select + " select")
+        self.label_CED.setText( f"CEDd {name_select} fps :{text_fps}")
 
         self.CLEAR_ALL()
         # Mise à jour de la spinbox de spectre
@@ -389,7 +387,6 @@ class DdacViewMixin:
             self.zone_movie_lines[0].setPos(t_min)
             self.zone_movie_lines[1].setPos(t_max)
 
-
     def update(self,val): # pour la barre de défilmetn des images
         self.current_index=int(val)
         state = self._get_state_for_run()
@@ -408,8 +405,6 @@ class DdacViewMixin:
             return frame
         else:
             return None
-
-
 
     def REFRESH(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
@@ -756,8 +751,8 @@ class DdacViewMixin:
             dp = (self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3
 
         txt = (
-            f"$t_s$={self.x1*1e3:.3f}ms n°s={self.x5:.2f}\n\n"
-            f"$t_i$={t*1e6:.3f}µs n°i={self.Num_im}\n\n"
+            f"$t_spec$={self.x1*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
+            f"$t_frame$={t*1e6:.3f}µs n°Frame={self.Num_im}\n\n"
             f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
             f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
             )

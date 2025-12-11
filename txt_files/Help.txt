@@ -1,0 +1,27 @@
+*!=BUG / touche != TOUCHE
+#---PIC---:
+r(R): replace pic (FIT)
+w(U)*!: Clear pic select (last)
+c*!: Creat new pic 
+Y*!: Auto pic 
+#---SPECTRUM---:
+T: New Spectrum
+A: Fit lmfit VS curvfit 
+Z*!: Zone fit
+b : Filtre & Baseline
+s(S): Calcul Study (mini)
+0: Change lambda0
+#---GAUGE---:
+J: Add Gauge
+O: Dell Gauge
+#---dDAC---:
+E: New CEDd
+K: Clear CEDd
+X: Save CEDd
+N: Refresh
+#---SETUP---:
+L: Lecroy Interface
+p: resize window Spec/CEDd 
+
+
+shift+entree: EXECTUE CODE

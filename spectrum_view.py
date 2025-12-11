@@ -73,6 +73,7 @@ class SpectrumViewMixin:
 
         # Filtres, baseline etc.
         self.curve_baseline_brut = self.pg_baseline.plot()
+        #self.curve_baseline_filtre = self.pg_baseline.plot()
         self.curve_baseline_blfit = self.pg_baseline.plot()
         self.curve_fft = self.pg_fft.plot()
 
@@ -81,7 +82,7 @@ class SpectrumViewMixin:
 
         # Zoom : zone + pic sélectionné + spectre brut / corrigé
         self.curve_zoom_data = self.pg_zoom.plot()
-        self.curve_zoom_pic = self.pg_zoom.plot(pen='r')
+        self.curve_zoom_pic = self.pg_zoom.plot(pen=None, fillLevel=0 )
         self.curve_zoom_data_brut = self.pg_zoom.plot(pen='y')
 
         # Sur le spectre principal : pic sélectionné
@@ -116,6 +117,7 @@ class SpectrumViewMixin:
         self.index_pic_select = -1
         self.index_spec = 0
 
+        self.lines =[]
         self.X0 = 0
         self.Y0 = 0
         self.Zone_fit = []
@@ -365,6 +367,7 @@ class SpectrumViewMixin:
                 self.select_pic()
             finally:
                 self.bit_bypass = False
+    
     def _refresh_spectrum_view(self):
         """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
 
@@ -421,38 +424,60 @@ class SpectrumViewMixin:
                 x_spec = np.asarray(S.wnb)
                 y_spec = np.asarray(S.spec)
 
-        # 2) Fit global (somme des pics)
-        if hasattr(S, "y_fit") and S.y_fit is not None:
-            y_fit = np.asarray(S.y_fit)
-            if x_spec is not None and y_fit.shape == x_spec.shape:
-                self.curve_spec_fit.setData(x_spec, y_fit)
-            else:
-                # fallback : on prend wnb si dispo
-                if hasattr(S, "wnb") and S.wnb is not None:
-                    self.curve_spec_fit.setData(S.wnb, y_fit)
+        # 2) Fit total (self.y_fit_start)
+        if self.y_fit_start is not None and hasattr(S, "wnb"):
+            self.curve_spec_fit.setData(S.wnb, self.y_fit_start)
         else:
             self.curve_spec_fit.setData([], [])
+        
+        # 2 bis) Mise à jour du fond avec *tous* les pics
+        self._update_gauge_peaks_background()
 
-        # 3) dY
+        # 3) dY : X = ceux du spectre, Y = dY
         if hasattr(S, "dY") and S.dY is not None:
-            self.curve_dy.setData(S.wnb, S.dY)
+            self.curve_dy.setData(S.wnb[S.indexX] if S.indexX is not None else S.wnb , np.array(S.dY))
         else:
             self.curve_dy.setData([], [])
 
-        # 4) Baseline
-        if hasattr(S, "spec") and S.spec is not None:
+        # 4) Baseline : brut + blfit
+        if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
             self.curve_baseline_brut.setData(S.wnb, S.spec)
+
+            # limites du graphe brut : X et Y du brut
             vb_base = self.pg_baseline.getViewBox()
             self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
         else:
             self.curve_baseline_brut.setData([], [])
 
         if hasattr(S, "blfit") and S.blfit is not None:
-            self.curve_baseline_blfit.setData(S.wnb, S.blfit)
+            if getattr(S, "indexX", None) is not None:
+                self.curve_baseline_blfit.setData(S.wnb[S.indexX], S.blfit[S.indexX])
+            else:
+                self.curve_baseline_blfit.setData(S.wnb, S.blfit)
         else:
             self.curve_baseline_blfit.setData([], [])
 
-        # 5) FFT
+        # 5) FFT : même X que le spectre, mais limites Y = amplitude FFT
+        # (adapte les noms d'attributs FFT si besoin)
+        if hasattr(S, "fft_amp") and S.fft_amp is not None:
+            # Exemple : on trace FFT avec un axe fréquentiel S.fft_f
+            if hasattr(S, "fft_f") and S.fft_f is not None:
+                self.curve_fft.setData(S.fft_f, S.fft_amp)
+                x_fft = np.asarray(S.fft_f)
+            else:
+                # si tu n'as pas d'axe de fréquence propre, tu peux simplement utiliser le même X que le spectre
+                if x_spec is not None:
+                    x_fft = x_spec
+                    self.curve_fft.setData(x_fft, S.fft_amp)
+                else:
+                    x_fft = None
+        else:
+            self.curve_fft.setData([], [])
+            x_fft = None
+
+        # Limites du graphe FFT :
+        # - X : mêmes que le spectre (si x_spec dispo)
+        # - Y : amplitude FFT
         if x_spec is not None and hasattr(S, "fft_amp") and S.fft_amp is not None:
             vb_fft = self.pg_fft.getViewBox()
             # On force les limites X avec x_spec, et Y avec fft_amp
@@ -646,6 +671,7 @@ class SpectrumViewMixin:
         self.index_pic_select = save_pic
         self.LOAD_Gauge()
         self.Print_fit_start()
+    
     def Update_var(self,name=None):
         self.list_name_gauges.append(name)
         self.Nom_pic.append([])
@@ -901,6 +927,7 @@ class SpectrumViewMixin:
                 del(self.list_y_fit_start[self.index_jauge][self.index_pic_select])
                 del(self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select])
                 self.Print_fit_start()
+    
     def select_pic(self):
         if not self.bit_bypass:
             self.index_pic_select = self.listbox_pic.currentRow()
@@ -1028,6 +1055,7 @@ class SpectrumViewMixin:
             self.curve_zoom_pic.setData([], [])
         except Exception:
             pass
+    
     def Replace_pic(self):
         if (
             self.Spectrum is None
@@ -1129,7 +1157,6 @@ class SpectrumViewMixin:
         except Exception as e:
             print("Zoom XRange error:", e)
 
-
     def Replace_pic_fit(self):
         if (
             self.Spectrum is None
@@ -1221,7 +1248,6 @@ class SpectrumViewMixin:
             vb_zoom.setXRange(float(np.nanmin(xz_zoom)), float(np.nanmax(xz_zoom)), padding=0.1)
         except Exception as e:
             print("Zoom XRange error:", e)
-
 
     def LOAD_Spectrum(self, item=None, Spectrum=None):
         """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
@@ -1450,3 +1476,26 @@ class SpectrumViewMixin:
         )
         self.name_gauge.setText("In")
         self.name_gauge.setStyleSheet("background-color: green;")
+
+    def on_spec_index_changed(self, value: int):
+        """Appelé quand on change l'index de spectre via la spinbox."""
+        if self.RUN is None:
+            return
+        if not hasattr(self.RUN, "Spectra") or not self.RUN.Spectra:
+            return
+        if value < 0 or value >= len(self.RUN.Spectra):
+            return
+
+        self.index_spec = value
+        self.Spectrum = self.RUN.Spectra[self.index_spec]
+
+        self.bit_bypass = True
+        try:
+            # si LOAD_Spectrum accepte un argument Spectrum, utilise-le
+            self.LOAD_Spectrum(Spectrum=self.Spectrum)
+        except TypeError:
+            # sinon, si ta LOAD_Spectrum lit self.index_spec directement
+            self.LOAD_Spectrum()
+        self.bit_bypass = False
+
+        self.Update_Print()

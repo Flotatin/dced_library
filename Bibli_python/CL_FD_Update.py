@@ -3,10 +3,7 @@ import os
 import re
 import sys
 import time
-import tkinter as tk
 from math import log, sqrt
-from tkinter import filedialog
-
 import cv2
 import dill
 import lecroyscope
@@ -28,7 +25,6 @@ from PyQt5.QtWidgets import (
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import Button, Slider
 from lmfit.models import (
     GaussianModel,
@@ -42,9 +38,6 @@ from scipy.signal import savgol_filter
 from scipy.special import beta, gamma
 from tqdm import tqdm
 
-
-#from scipy.optimize import minimize
-#from scipy.special import voigt_profile
 """ ------------------------------------- FONCTION GESTION DE FICHIER -------------------------------------"""
 def SAVE_CEDd(file_CEDd,bit_try=False):
     if file_CEDd:
@@ -83,79 +76,6 @@ def Load_last(Folder,extend=None,file=True):
         latest_file_name = file_names[-1]
         latest_file_path = os.path.join(Folder, latest_file_name)
     return latest_file_path, latest_file_name
-
-class Chemin(tk.Frame):
-    def __init__(self, parent,taille_nom_fichier,fichier1,fichier2,fichier3,fichier4,dossier1,dossier2):
-        tk.Frame.__init__(self, parent)
-        self.parent = parent
-        self.pack()
-        self.lift() 
-        self.taille_nom_fichier=taille_nom_fichier
-        self.fichier1=fichier1
-        self.fichier2=fichier2
-        self.fichier3=fichier3
-        self.fichier4=fichier4
-        self.dossier1=dossier1
-        self.dossier2=dossier2
-        self.help="Chemin : fenetre pour charger des chemin de document ou de fichier"
-        
-        #fichier1
-        self.btn_fichier1 = tk.Button(self, text="Sélectionner le Fichier1", command=self.selectionner_fichier1) # Créer les boutons de sélection de fichiers/dossier1
-        self.nom_fichier1 = tk.Label(self, text=self.fichier1[self.taille_nom_fichier:]) # Créer la zone d'afffichage du nom fichiers/dossier1
-        self.btn_fichier1.pack()  # Afficher le boutons à l'écran   
-        self.nom_fichier1.pack() # Afficher le nom à l'écran
-        #fichier2
-        self.btn_fichier2 = tk.Button(self, text="Sélectionner le Fichier2", command=self.selectionner_fichier2)
-        self.nom_fichier2 = tk.Label(self, text=self.fichier2[self.taille_nom_fichier:])
-        self.btn_fichier2.pack()
-        self.nom_fichier2.pack()
-        #fichier3
-        self.btn_fichier3 = tk.Button(self, text="Sélectionner le Fichier3", command=self.selectionner_fichier3)
-        self.nom_fichier3 = tk.Label(self, text=self.fichier3[self.taille_nom_fichier:])
-        self.btn_fichier3.pack()
-        self.nom_fichier3.pack()
-        #fichier4
-        self.btn_fichier4 = tk.Button(self, text="Sélectionner le Fichier4", command=self.selectionner_fichier4)
-        self.nom_fichier4 = tk.Label(self, text=self.fichier4[self.taille_nom_fichier:])
-        self.btn_fichier4.pack()
-        self.nom_fichier4.pack()
-
-        #dossier1
-        self.btn_dossier1 = tk.Button(self, text="Sélectionner le Dossier1", command= lambda : self.selectionner_dossier1())
-        self.nom_dossier1 = tk.Label(self, text=self.dossier1[self.taille_nom_fichier:])
-        self.btn_dossier1.pack()
-        self.nom_dossier1.pack()
-        #dossier2
-        self.btn_dossier2 = tk.Button(self, text="Sélectionner le Dossier2", command=self.selectionner_dossier2)
-        self.nom_dossier2 = tk.Label(self, text=self.dossier2[self.taille_nom_fichier:])
-        self.btn_dossier2.pack()
-        self.nom_dossier2.pack()
-        
-    def selectionner_fichier1(self):
-        # Sélectionner le premier fichier
-        self.fichier1 = filedialog.askopenfilename(initialdir=os.path.dirname(self.fichier1),title="Sélectionner le fichier1")
-        # Afficher le chemin du fichier sélectionné
-        self.nom_fichier1.config(text=self.fichier1[self.taille_nom_fichier:])
-
-    def selectionner_fichier2(self):
-        self.fichier2 = filedialog.askopenfilename(initialdir=os.path.dirname(self.fichier2),title="Sélectionner le Fichier2")
-        self.nom_fichier2.config(text=self.fichier2[self.taille_nom_fichier:])
-
-    def selectionner_fichier3(self):
-        self.fichier3 = filedialog.askopenfilename(initialdir=os.path.dirname(self.fichier3),title="Sélectionner le Fichier3")
-        self.nom_fichier3.config(text=self.fichier3[self.taille_nom_fichier:]) 
-
-    def selectionner_fichier4(self):
-        self.fichier4 = filedialog.askopenfilename(initialdir=os.path.dirname(self.fichier4),title="Sélectionner le Fichier4")
-        self.nom_fichier4.config(text=self.fichier4[self.taille_nom_fichier:]) 
-
-    def selectionner_dossier1(self):
-        self.dossier1 = filedialog.askdirectory(initialdir=self.dossier1,title="Sélectionner le Dossier1") #askdirectory PAS askopenfilename
-        self.nom_dossier1.config(text=self.dossier1[self.taille_nom_fichier:])  
-        
-    def selectionner_dossier2(self):
-        self.dossier2 = filedialog.askdirectory(initialdir=self.dossier2,title="Sélectionner le Dossier2")
-        self.nom_dossier2.config(text=self.dossier2[self.taille_nom_fichier:])
 
 """ ------------------------------------- FENETRE UTILE -------------------------------------"""
 
@@ -277,9 +197,7 @@ class ProgressDialog(QDialog):
         return self.user_choice,self.Param0,self.inter
 
 
-
 """ ------------------------------------- LOI DE PRESSION -------------------------------------"""
-
 
 def Raman_Dc12__2003_Occelli(peakmax,lamb0=1333,sigmalambda=None):
     deltalambda=peakmax-lamb0
@@ -298,7 +216,6 @@ def Raman_Dc13_1997_Schieferl(peakmax,lamb0=1287.79,sigmalambda=None):
     else:
         sigmaP= sigmalambda/2.83
         return P , sigmaP
-
 
 def Sm_2015_Rashenko(peakMax,lamb0=685.41,sigmalambda=None): #https://doi.org/10.1063/1.4918304
     deltalambda=peakMax-lamb0
@@ -387,6 +304,7 @@ def Rhodamine_6G_2024_Dembele(peakMax,lamb0 = 551.3916,sigmalambda=None): # !!!!
     else:
         sigmaP= a*sigmalambda*deltalambda*2 + b*sigmalambda
         return P , sigmaP
+
 """------------------------------------- LOI FIT -------------------------------------"""      
 def PseudoVoigt(x,center,ampH,sigma,fraction):
     amp=ampH/(((1-fraction))/(sigma*sqrt(np.pi/log(2)))+(fraction)/(np.pi*sigma))
@@ -439,10 +357,11 @@ class Pics:
         self.f_amp=None
         inter_min=max(1-inter,0)
         self.sigma=[sigma,[sigma*inter_min,sigma*(1+inter)]]
+        self.lim_sigma=[sigma*0.05,sigma*8]
         self.inter=inter
         self.ampH=[ampH,[ampH*inter_min,ampH*((1+inter))]]
         self.best_fit=None
-        self.help="Pics: définbition de modéle de pics de luminesance"
+        self.help="Pics: définition de modéle de pics de luminesance"
         coef_spe=np.array(coef_spe)
         self.coef_spe= [[c,[c*inter_min,c*(1+inter)]]for c in coef_spe]# [coef_spe,[coef_spe*inter_min,[max(1,c*(1+inter)) for c in coef_spe]]]
 
@@ -482,7 +401,6 @@ class Pics:
             self.ctr=[ctr,[ctr-Delta_ctr,ctr+Delta_ctr]]
 
         if amp is None:
-            #print(self.f_amp)
             amp=self.f_amp(self.ampH[0],[float(c[0]) for c in self.coef_spe],sigma) #ampH/(((1-coef_spe))/(sigma*sqrt(np.pi/log(2)))+(coef_spe)/(np.pi*sigma))
         
         self.amp=[amp,[amp*inter_min,amp*((1+inter))]]
@@ -512,7 +430,6 @@ class Pics:
         return  ampH / (normalization*(1 + (skew/(2*m))**2)**-m * np.exp(-skew * np.arctan(-skew/(2*m))))
 
     def Update(self,ctr=None,ampH=None,coef_spe=None,sigma=None,inter=None,model_fit=None,Delta_ctr=None,amp=None,move=False):
-        #print("updtae",self.name)
         if Delta_ctr is None:
             Delta_ctr =0.4
         if inter !=None:
@@ -524,10 +441,10 @@ class Pics:
 
         if ctr != None :
             self.ctr=[ctr,[ctr-Delta_ctr,ctr+Delta_ctr]]
-        if sigma != None:
-            self.sigma=[sigma,[sigma*inter_min,sigma*(1+self.inter)]]
-        else:
-            self.sigma=[self.sigma[0],[self.sigma[0]*inter_min,self.sigma[0]*(1+self.inter)]]
+        if sigma == None:
+            sigma=float(self.sigma[0])
+        sig_min,sig_max=getattr(self,'lim_sigma',(0,2.5))
+        self.sigma=[sigma,[max(sigma*inter_min,sig_min),min(sigma*(1+self.inter),sig_max)]]
 
         if (model_fit is not None) and  (model_fit is not self.model_fit):
             self.model_fit=model_fit
@@ -552,7 +469,6 @@ class Pics:
                 self.name_coef_spe=[]
                 self.model = GaussianModel(prefix=self.name)
                 self.f_model=Gaussian
-
             elif model_fit =="PearsonIV":
                 self.f_amp=self.Amp_PearsonIV
                 self.name_coef_spe=["expon","skew"]
@@ -592,9 +508,6 @@ class Pics:
         self.model.set_param_hint(self.name+'amplitude', value=self.amp[0],min=self.amp[1][0],max=self.amp[1][1])
         self.model.set_param_hint(self.name+'sigma', value=self.sigma[0],min=self.sigma[1][0],max=self.sigma[1][1])
         self.model.set_param_hint(self.name+'center', value=self.ctr[0],min=self.ctr[1][0],max=self.ctr[1][1])
-
-        #if self.model_fit =="PearsonIV":
-            #self.model.set_param_hint(self.name+'skew', value=self.ctr[0],min=self.ctr[1][0],max=self.ctr[1][1])
 
     def Out_model(self,out=None,l_params=None):
         if out is not None:
@@ -683,14 +596,12 @@ class Pics:
         elif request == 'test':
             print("OK")
 
-
 """ CLASSE JAUGE """
 # p1 le pique principale de mesure 
 # nb_pic : le nombre de pic
 # lamb0 la lambda0 de l'ambitante
 # name = nom à trouver
 # color_print = [ couleur principale , couleur des pique]
-
 
 class Gauge:
     def __init__(self,name="",lamb0=None,nb_pic=None,X=None,Y=None,deltaP0i=[],spe=None,f_P=None,name_spe=''):
@@ -703,11 +614,8 @@ class Gauge:
         self.Y=Y
         self.dY=None
         self.spe=spe
-        
         self.f_P=f_P
         if f_P is not None:
-            #def inv_f(x):
-            #return inversefunc(f_P,x)
             self.inv_f_P= inversefunc((lambda x :f_P(x)),domain=[10,1000])
         else:
             self.inv_f_P=None
@@ -774,10 +682,9 @@ class Gauge:
         self.name_spe="Ru"
         self.deltaP0i=[[0,1],[-1.5,0.75]]
         self.color_print=['darkred',['darkred','brown']]
-
         if self.f_P == None:
             self.f_P=Ruby_2020_Shen
-            self.inv_f_P=inversefunc((lambda x :self.f_P(x)),domain=[690,750])
+            self.inv_f_P=inversefunc((lambda x :self.f_P(x)),domain=[692,750])
 
         self.Init_perso()
 
@@ -924,7 +831,7 @@ class Gauge:
         self.indexX=None
         self.fit="Fit Non effectué"
     
-    #MODIFICATIOND E PIQUE
+    #MODIFICATION DE PIQUE
     def Update_Fit(self,crt,ampH,coef_spe=None,sigma=None,inter=None,model_fit=None,Delta_ctr=None):
         for i in range(len(self.pics)):
             if len(self.deltaP0i[i]) >2:
@@ -1811,9 +1718,6 @@ class CEDd:
 
     def Help(self):
         print("sorry")
-
-""" ------------------------------------- CLASS DE FIT  -------------------------------------"""
-  
 
 """ ------------------------------------- CLASS OSCILOSCOPE LECROY-------------------------------------"""
 class Oscillo_autosave:

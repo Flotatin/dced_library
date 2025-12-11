@@ -1,5 +1,4 @@
 from string import Template
-
 from PyQt5.QtCore import Qt
 
 STYLE_TEMPLATE = Template(
@@ -149,6 +148,7 @@ THEMES = {
             "dy": {"color": "#ffff00"},
             "zero_line": {"color": "#000000"},
             "baseline_brut": {"color": "#ffffff"},
+            "baseline_filtre": {"color": "#0f0f0f"},
             "baseline_fit": {"color": "#00ffff"},
             "fft": {"color": "#ff00ff"},
             "zoom_data": {"color": "#000000"},
@@ -185,6 +185,7 @@ THEMES = {
             "dy": {"color": "#7f6000"},
             "zero_line": {"color": "#555555"},
             "baseline_brut": {"color": "#1e1e1e"},
+            "baseline_filtre": {"color": "#0e0e0e"},
             "baseline_fit": {"color": "#1b4f72"},
             "fft": {"color": "#884ea0"},
             "zoom_data": {"color": "#1e1e1e"},

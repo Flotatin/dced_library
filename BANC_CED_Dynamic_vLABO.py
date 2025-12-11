@@ -4,20 +4,17 @@ import copy
 import io
 import os
 import sys
-import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-
 import cv2
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from pynverse import inversefunc
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QApplication,
@@ -27,9 +24,12 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
-    QStyledItemDelegate,
-    QTableWidget,
-    QTableWidgetItem,
+    QListWidgetItem,
+    QHBoxLayout,
+    QPushButton,
+    QVBoxLayout,
+    QLabel,
+    QDoubleSpinBox,
     QWidget,
 )
 from scipy.optimize import curve_fit
@@ -45,9 +45,6 @@ pg.setConfigOptions(
     #downsample=True,         # évite de tracer chaque point si énorme -> bug 
 )
 
-
-
-
 Setup_mode = False
 
 folder_start=r"F:\Aquisition_Banc_CEDd"
@@ -57,43 +54,6 @@ from Bibli_python import CL_FD_Update as CL
 
 from Bibli_python import Oscilloscope_LeCroy_vLABO as Oscilo
 
-def plot_clear(plot):
-    try:
-        if plot is None:
-            return
-        if type(plot) is list:
-            for p in plot:
-                p.remove()
-        else:
-            plot.remove()
-    except Exception as e:
-        print(e)
-
-def configurer_axes(ax):
-    ax.set_facecolor("#2b2b2b")
-    ax.tick_params(colors="#e0e0e0", labelcolor="#e0e0e0")
-    ax.tick_params(which="minor", colors="#e0e0e0", labelcolor="#e0e0e0") 
-    ax.title.set_color("#e0e0e0")
-    ax.xaxis.label.set_color("#e0e0e0")
-    ax.yaxis.label.set_color("#e0e0e0")
-    for spine in ax.spines.values():
-        spine.set_color("#555555")
-
-from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QPushButton,
-    QHBoxLayout, QProgressBar, QWidget
-)
-from PyQt5.QtCore import Qt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-
-class SciAxis(pg.AxisItem):
-    """Axe qui affiche les ticks en notation scientifique (1.23e+04)."""
-
-    def tickStrings(self, values, scale, spacing):
-        # values est la liste des positions de ticks en coordonnées "données"
-        # On ne touche PAS aux données, on ne fait que formatter l'affichage.
-        return [f"{v:.1e}" for v in values]
-
 
 class ProgressDialog(QDialog):
     """
@@ -101,8 +61,7 @@ class ProgressDialog(QDialog):
     Compatible avec ton usage dans le multi-fit.
     """
 
-    def __init__(self, figs=None, cancel_text="Annuler",
-                 value=0, Gauges=None, parent=None):
+    def __init__(self, cancel_text="Annuler", value=0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Progression du fit")
         self.was_canceled = False
@@ -118,12 +77,6 @@ class ProgressDialog(QDialog):
         self.progress.setRange(0, 100)
         self.progress.setValue(value)
         layout.addWidget(self.progress)
-
-        # -------- FIGURES MATPLOTLIB --------
-        if figs:
-            for fig in figs:
-                canvas = FigureCanvas(fig)
-                layout.addWidget(canvas)
 
         # -------- BOUTONS --------
         btn_layout = QHBoxLayout()
@@ -154,18 +107,9 @@ class ProgressDialog(QDialog):
         """
         return (not self.was_canceled, None, None)
 
-
-class EditableDelegate(QStyledItemDelegate):
-    """A delegate that allows for cell editing"""
-
-    def createEditor(self, parent, option, index):
-        editor = QLineEdit(parent)
-        return editor
-
 @dataclass
 class RunViewState:
     """État graphique associé à un CEDd (remplace les listes parallèles)."""
-
     ced: CL.CEDd
     color: str
     time: list = field(default_factory=list)
@@ -182,7 +126,6 @@ class RunViewState:
     index_cam: list = field(default_factory=list)
     correlations: list = field(default_factory=list)
     list_item: Optional[QListWidgetItem] = None
-
 
 class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def __init__(self, folder_start=None):
@@ -368,6 +311,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.curve_dy.setPen(self._mk_pen(pens["dy"]))
             self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
             self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
+            #self.curve_baseline_filtre.setPen(self._mk_pen(pens["baseline_filtre"]))
             self.curve_baseline_blfit.setPen(self._mk_pen(pens["baseline_fit"]))
             self.curve_fft.setPen(self._mk_pen(pens["fft"]))
             self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
@@ -455,14 +399,12 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             plot_item.showGrid(x=True, y=True, alpha=self._get_theme()["grid_alpha"])
         plot_item.setMouseEnabled(x=True, y=True)
 
-
     def _get_run_id(self, ced):
         """Retourne une clé stable pour un CEDd donné."""
 
         if hasattr(ced, "CEDd_path") and ced.CEDd_path:
             return ced.CEDd_path
         return f"memory_{id(ced)}"
-
 
     def toggle_python_kernel(self, checked: bool):
         """
@@ -513,7 +455,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.ADD_gauge()
         self.FIT_lmfitVScurvfit()
         self.CREAT_new_CEDd()
-
 
     def _update_graphicslayout_sizes(self, glw, row_factors=None, col_factors=None):
         """
@@ -569,9 +510,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 col_factors=getattr(self, "_ddac_col_factors", None),
             )
 
-
 #? CALVIER COMMANDE CONTROLE
-
     def keyPressEvent(self, event):# - - - COMMANDE CLAVIER - - -# 
         key = event.key() 
         modifiers = event.modifiers()
@@ -583,7 +522,17 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 return print("focus in Lecroy")
         if Setup_mode is True:
             print(key)
-        
+            if key == Qt.Key_C : #CONFIRME PIC
+                f=self.Click_Confirme
+            elif key == Qt.Key_Z and modifiers & Qt.ShiftModifier: #ZONE 
+                f=self.Click_Zone
+            elif key == Qt.Key_U and modifiers & Qt.ShiftModifier: #Delle last pic
+                f=self.Undo_pic
+            elif key == Qt.Key_Return and modifiers & Qt.ShiftModifier : 
+                f=self.Click_Clear
+            elif key == Qt.Key_W :
+                f=self.Undo_pic_select
+
         if event.key() == Qt.Key_Return and event.modifiers() == Qt.ControlModifier: # EXECTUE CODE PYTHON
             self.execute_code()
             return
@@ -592,7 +541,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.viewer = Oscilo.OscilloscopeViewer(folder=os.path.join(folder_start,"Aquisition_LECROY_Banc_CEDd"))
             self.viewer.show()
 
-        elif key == Qt.Key_B: # BASE LINE
+        elif key == Qt.Key_B and modifiers & Qt.ShiftModifier: # BASE LINE
             f=self.Baseline_spectrum
             name_f="Baseline_spectrum"
     
@@ -607,7 +556,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             Box=True
             name_f="CLEAR CEDd"
         
-        
         elif key == Qt.Key_T and modifiers & Qt.ShiftModifier: #New Spectrum
             f=self.CREAT_new_Spectrum
             name_f="CREAT new Spectrum"
@@ -618,9 +566,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             Box=True
             name_f="FIT lmfit VS curvfit"
             
-        elif key == Qt.Key_C : #CONFIRME PIC
-            f=self.Click_Confirme
-        
         elif key == Qt.Key_Y and modifiers & Qt.ShiftModifier : # AUTOPIX
             f=self.Auto_pic
             #name_f="Auto pic"
@@ -629,27 +574,16 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             f=self.toggle_colonne
 
         elif key == Qt.Key_Z :
-            if modifiers & Qt.ShiftModifier: #ZONE 
-                f=self.Click_Zone
-            else:
                 f=self.f_zone_movie
-        elif key == Qt.Key_Return and modifiers & Qt.ShiftModifier : 
-            f=self.Click_Clear
-            
+         
         elif key == Qt.Key_O and modifiers & Qt.ShiftModifier : #DELL JAUGE
             f=self.Dell_Jauge
         
-        elif key == Qt.Key_U and modifiers & Qt.ShiftModifier: #Delle last pic
-            f=self.Undo_pic
-
         elif key == Qt.Key_R :
             if modifiers & Qt.ShiftModifier:
                 f=self.Replace_pic_fit
             else:
                 f=self.Replace_pic
-
-        elif key == Qt.Key_W :
-            f=self.Undo_pic_select
 
         elif key == Qt.Key_N and modifiers & Qt.ShiftModifier: 
             f=self.REFRESH
@@ -738,131 +672,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         
         error_box.exec_()    
 
-    def _refresh_spectrum_view(self):
-        """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
-
-        Les courbes de spectre, fit global, dérivée dY, baseline et FFT sont mises
-        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline, pg_fft).
-        La fonction ajuste aussi les limites de ViewBox et met à jour l'état local
-        (drapeau d'initialisation des limites) sans modifier la logique métier du
-        calcul du spectre.
-        """
-        S = self.Spectrum
-        if S is None:
-            # on vide tout
-            self.curve_spec_data.setData([], [])
-            self.curve_spec_fit.setData([], [])
-            self.curve_dy.setData([], [])
-            self.curve_baseline_brut.setData([], [])
-            self.curve_baseline_blfit.setData([], [])
-            self.curve_fft.setData([], [])
-            self.curve_zoom_data.setData([], [])
-            self.curve_zoom_data_brut.setData([], [])
-            self.curve_zoom_pic.setData([], [])
-            self.curve_spec_pic_select.setData([], [])
-            return
-
-        # --- On mémorise les X/Y du spectre principal pour les autres graphes ---
-        x_spec = None
-        y_spec = None
-
-        # 1) Spectre corrigé
-        if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
-            x = np.asarray(S.x_corr)
-            y = np.asarray(S.y_corr)
-            self.curve_spec_data.setData(x, y)
-
-            x_spec = x
-            y_spec = y
-
-            vb_spec = self.pg_spectrum.getViewBox()
-
-            # Contraindre les bornes de pan/zoom au spectre
-            self._set_viewbox_limits_from_data(vb_spec, x, y, padding=0.02)
-
-            # Centrer la vue sur les données seulement une fois
-            if not self._spectrum_limits_initialized:
-                try:
-                    vb_spec.setXRange(float(x[0]), float(x[-1]), padding=0.02)
-                except Exception as e:
-                    print("XRange error:", e)
-                self._spectrum_limits_initialized = True
-        else:
-            self.curve_spec_data.setData([], [])
-            # si pas de x_corr, on peut prendre wnb comme X de référence
-            if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "spec") and S.spec is not None:
-                x_spec = np.asarray(S.wnb)
-                y_spec = np.asarray(S.spec)
-
-        # 2) Fit total (self.y_fit_start)
-        if self.y_fit_start is not None and hasattr(S, "wnb"):
-            self.curve_spec_fit.setData(S.wnb, self.y_fit_start)
-        else:
-            self.curve_spec_fit.setData([], [])
-        
-        # 2 bis) Mise à jour du fond avec *tous* les pics
-        self._update_gauge_peaks_background()
-
-        # 3) dY : X = ceux du spectre, Y = dY
-        if hasattr(S, "dY") and S.dY is not None:
-            self.curve_dy.setData(S.X if hasattr(S, "X") and S.X is not None else S.wnb, S.dY)
-        else:
-            self.curve_dy.setData([], [])
-
-        # 4) Baseline : brut + blfit
-        if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
-            self.curve_baseline_brut.setData(S.wnb, S.spec)
-
-            # limites du graphe brut : X et Y du brut
-            vb_base = self.pg_baseline.getViewBox()
-            self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
-        else:
-            self.curve_baseline_brut.setData([], [])
-
-        if hasattr(S, "blfit") and S.blfit is not None:
-            if getattr(S, "indexX", None) is not None:
-                self.curve_baseline_blfit.setData(S.wnb[S.indexX], S.blfit[S.indexX])
-            else:
-                self.curve_baseline_blfit.setData(S.wnb, S.blfit)
-        else:
-            self.curve_baseline_blfit.setData([], [])
-
-        # 5) FFT : même X que le spectre, mais limites Y = amplitude FFT
-        # (adapte les noms d'attributs FFT si besoin)
-        if hasattr(S, "fft_amp") and S.fft_amp is not None:
-            # Exemple : on trace FFT avec un axe fréquentiel S.fft_f
-            if hasattr(S, "fft_f") and S.fft_f is not None:
-                self.curve_fft.setData(S.fft_f, S.fft_amp)
-                x_fft = np.asarray(S.fft_f)
-            else:
-                # si tu n'as pas d'axe de fréquence propre, tu peux simplement utiliser le même X que le spectre
-                if x_spec is not None:
-                    x_fft = x_spec
-                    self.curve_fft.setData(x_fft, S.fft_amp)
-                else:
-                    x_fft = None
-        else:
-            self.curve_fft.setData([], [])
-            x_fft = None
-
-        # Limites du graphe FFT :
-        # - X : mêmes que le spectre (si x_spec dispo)
-        # - Y : amplitude FFT
-        if x_spec is not None and hasattr(S, "fft_amp") and S.fft_amp is not None:
-            vb_fft = self.pg_fft.getViewBox()
-            # On force les limites X avec x_spec, et Y avec fft_amp
-            # -> astuce : on donne x_data = x_spec, y_data = fft_amp
-            self._set_viewbox_limits_from_data(vb_fft, x_spec, S.fft_amp, padding=0.02)
-
-        # 6) Limites du graphe dY :
-        # X : mêmes que le spectre (x_spec)
-        # Y : dY
-        if x_spec is not None and hasattr(S, "dY") and S.dY is not None:
-            vb_dy = self.pg_dy.getViewBox()
-            # même astuce : x_data = x_spec, y_data = dY
-            self._set_viewbox_limits_from_data(vb_dy, x_spec, S.dY, padding=0.02)
-            self.pg_dy.setLimits(xMin=x_spec[0], xMax=x_spec[-1])
-
     def execute_code(self, code=None):
         if code is None:
             code = self.text_edit.toPlainText()
@@ -931,20 +740,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
 #########################################################################################################################################################################################
 #? COMMANDE CEDD
-    def f_text_CEDd_print(self, t):
-        """Met à jour le texte d'information dDAC dans le TextItem PyQtGraph."""
-        dp = None
-        if getattr(self, "tstart", None) is not None and getattr(self, "tend", None) is not None \
-        and self.tstart != self.tend:
-            dp = (self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3
-
-        txt = (
-            f"$t_s$={self.x1*1e3:.3f}ms n°s={self.x5:.2f}\n\n"
-            f"$t_i$={t*1e6:.3f}µs n°i={self.Num_im}\n\n"
-            f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
-            f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
-            )
-        self.pg_text_label.setText(txt)
 
     def _on_ddac_click(self, mouse_event):
         """Gère les clics sur les graphes temporels dDAC et synchronise l'état UI.
@@ -1049,8 +844,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         self.f_CEDd_update_print()
     
-
-
 #########################################################################################################################################################################################
 #? MOVIE 
 #########################################################################################################################################################################################
@@ -1173,7 +966,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             except Exception:
                 pass
         self.lines = []
-
     
     def f_p_move(self, J_select, value):
         """Met à jour la jauge J_select à partir d'une pression P (value)."""
@@ -1219,20 +1011,16 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         """Callback du spinbox_P : changement de P."""
         if self.bit_modif_PTlambda:
             return
-
         try:
             if self.bit_load_jauge:
                 self.Gauge_select.lamb_fit = \
                     self.Gauge_select.inv_f_P(value) + self.deltalambdaT
                 self.Gauge_select = self.f_p_move(self.Gauge_select, value)
-
             if self.bit_modif_jauge and self.Spectrum is not None and self.index_jauge >= 0:
                 G = self.Spectrum.Gauges[self.index_jauge]
                 G.lamb_fit = G.inv_f_P(value) + self.deltalambdaT
                 self.Spectrum.Gauges[self.index_jauge] = self.f_p_move(G, value)
-
             self.save_value = value
-
         except Exception as e:
             print("spinbox_p_move error:", e)
 
@@ -1418,6 +1206,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.pg_P.enableAutoRange(axis='y', enable=True)
         self.pg_dPdt.enableAutoRange(axis='y', enable=True)
         self.pg_sigma.enableAutoRange(axis='y', enable=True)
+#########################################################################################################################################################################################
 #? COMMANDE self.update 
     def f_gauge_select(self):
         col1 = self.Gauge_type_selector.model().item(self.Gauge_type_selector.currentIndex()).background().color().getRgb()
@@ -1577,8 +1366,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 )
 
                 # Zone min/max basée sur ctr ± 5σ
-                x_min = min(x_min, float(ctr) - float(sigma) * 5.0)
-                x_max = max(x_max, float(ctr) + float(sigma) * 5.0)
+                x_min = min(x_min, float(ctr) - float(sigma) * int(self.sigma_pic_fit_entry.value()))
+                x_max = max(x_max, float(ctr) + float(sigma) * int(self.sigma_pic_fit_entry.value()))
 
                 # Fonction de modèle (pour Gen_sum_F)
                 list_F.append(pic.f_model)
@@ -1645,13 +1434,13 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             if is_better
             else f"{text_base} LESS GOOD you can Cancel"
         )
-
-        # 2) Traces provisoires (PyQtGraph)
-        temp_curve_fit = self.pg_spectrum.plot(x_fit, fit, pen=pg.mkPen(color, width=2, style=Qt.DashLine))
-        temp_curve_dy = self.pg_dy.plot(x_fit, y_fit - fit, pen=pg.mkPen(color, width=2, style=Qt.DashLine))
-
+       
         # 3) Interaction utilisateur / ou auto en bypass
         if not self.bit_bypass:
+            # Traces provisoires (PyQtGraph)
+            temp_curve_fit = self.pg_spectrum.plot(x_fit, fit, pen=pg.mkPen(color, width=2, style=Qt.DashLine))
+            temp_curve_dy = self.pg_dy.plot(x_fit, y_fit - fit, pen=pg.mkPen(color, width=2, style=Qt.DashLine))
+
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("CURVE FIT DONE")
             msg_box.setText(text_fit + '\n Save fit Press "v" Cancel Press "c"')
@@ -1720,12 +1509,12 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 (self.Spectrum.wnb >= self.X_s[j])
                 & (self.Spectrum.wnb <= self.X_e[j])
             )[0]
-            x_fit = self.Spectrum.wnb[self.Zone_fit[j]]
+            x_fit = np.array(self.Spectrum.wnb[self.Zone_fit[j]])
             self.Spectrum.Gauges[j].indexX = self.Zone_fit[j]
-            y_fit = self.Spectrum.spec[self.Spectrum.indexX]
+            y_fit = np.array(self.Spectrum.spec[self.Spectrum.indexX])
         else:
-            x_fit = self.Spectrum.x_corr
-            y_fit = self.Spectrum.y_corr
+            x_fit = np.array(self.Spectrum.x_corr)
+            y_fit = np.array(self.Spectrum.y_corr)
 
         sum_function = CL.Gen_sum_F(list_F)
 
@@ -1753,12 +1542,12 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         if not accepted:
             self.Spectrum.bit_fit = True
             self.bit_fit_T = True
-            self.text_box_msg.setText("BAD FIT r^2 INCREAS")
+            self.text_box_msg.setText("BAD FIT $R^2$ INCREAS")
             return
 
         # 3) Mise à jour des données de la jauge j uniquement
         self.Spectrum.Gauges[j].Y = fit + self.Spectrum.blfit
-        self.Spectrum.Gauges[j].X = self.Spectrum.x_corr
+        self.Spectrum.Gauges[j].X = x_fit #self.Spectrum.x_corr
         self.Spectrum.Gauges[j].dY = y_fit - fit
         self.Spectrum.lamb_fit = params[0]
 
@@ -1815,10 +1604,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         """Fit global sur toutes les jauges (sans tracés Matplotlib)."""
         save_jauge = self.index_jauge
         save_pic = self.index_pic_select
-
         self.Param_FIT = []
         self.nb_jauges = len(self.Spectrum.Gauges)
-
         if self.nb_jauges == 0:
             self.text_box_msg.setText("FIT : aucune jauge dans le spectre.")
             return
@@ -1875,6 +1662,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 y_sub = self.Spectrum.y_corr
                 blfit = self.Spectrum.blfit
                 x_sub = self.Spectrum.wnb
+                self.Spectrum.indexX = None
+        y_sub,x_sub,blfit=np.array(y_sub), np.array(x_sub),np.array(blfit)
 
         # 3) Option : lmfit par jauge (comme avant)
         if self.vslmfit.isChecked():
@@ -2150,20 +1939,20 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         if hasattr(self.RUN,"fps") and self.RUN.fps is not None:
             try:
-                titre="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
+                text_fps="Movie :1e"+str(round(np.log10(self.RUN.fps),2))+"fps"
             except Exception as e:
                 print("fps log ERROR:",e)
-                titre="Movie :"+str(round(self.RUN.fps,2))+"fps"
+                text_fps="Movie :"+str(round(self.RUN.fps,2))+"fps"
         else:
-            titre="No Movie"
+            text_fps="No Movie"
 
-        self.setWindowTitle(titre)
+    
         if state.index_cam:
             self.current_index = len(state.index_cam)//2 if state.index_cam else 0
             self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
         self._update_movie_frame()
-        self.label_CED.setText( "CEDd "+item.text()+" select")
+        self.label_CED.setText( f"CEDd {item.text()} fps :{text_fps}")
         if state.time:
             x_min,x_max=min(state.time),max(state.time)
             self.pg_P.setXRange(x_min,x_max,padding=0.01)
@@ -2846,7 +2635,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.PRINT_CEDd(objet_run=New_CEDd, item=None)
         self.text_box_msg.setText("CEDd sans fit auto chargé.\nLancer ensuite le multi-fit.")
 
-
     def CREAT_new_Spectrum(self):
         save_gauges = []
 
@@ -2897,7 +2685,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         CL.SAVE_CEDd(self.RUN)
 #########################################################################################################################################################################################
 #? COMMANDE PIC
-
     def Update_var(self,name=None):
         self.list_name_gauges.append(name)
         self.Nom_pic.append([])
@@ -2950,14 +2737,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.select_pic()
             
     def Click_Confirme(self): # Fonction qui confirme le choix du pic et qui passe au suivant
-        if  "DRX" in (self.Spectrum.Gauges[self.index_jauge].spe or self.Spectrum.Gauges[self.index_jauge].name_spe): #a travailler !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            n=1
-            while n <= self.J[self.index_jauge] and n < self.Spectrum.Gauges[self.index_jauge].nb_pic :
-                n+=1                            
-            self.Nom_pic[self.index_jauge].append(self.list_name_gauges[self.index_jauge] +'_'+self.Spectrum.Gauges[self.index_jauge].Element_ref.name_dhkl[i]+'_')
-        else:
-            self.Nom_pic[self.index_jauge].append(self.list_name_gauges[self.index_jauge] +'_p'+str(self.J[self.index_jauge])+'_')
-
+        self.Nom_pic[self.index_jauge].append(self.list_name_gauges[self.index_jauge] +'_p'+str(self.J[self.index_jauge])+'_')
         self.Param0[self.index_jauge].append([self.X0,self.Y0,float(self.spinbox_sigma.value()),np.array([float(spin.value()) for spin in self.coef_dynamic_spinbox]),str(self.model_pic_fit)])
         new_name= str(self.Nom_pic[self.index_jauge][-1]) + "   X0:"+str(self.Param0[self.index_jauge][-1][0])+"   Y0:"+ str(self.Param0[self.index_jauge][-1][1]) + "   sigma:" + str(self.Param0[self.index_jauge][-1][2]) + "   Coef:" + str(self.Param0[self.index_jauge][-1][3]) +" ; Modele:" + str(self.Param0[self.index_jauge][-1][4])
         self.J[self.index_jauge]+=1
@@ -3105,12 +2885,14 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
     def Print_fit_start(self):
         # simple wrapper UI
-        if self.fit_start_box.isChecked():
-            self._recompute_y_fit_start()
+        #♦if self.fit_start_box.isChecked():
+        self._recompute_y_fit_start()
+        """
         else:
-            #self.y_fit_start = None
+            self.y_fit_start = None
             if self.Spectrum is not None:
                 self.Spectrum.dY = self.Spectrum.y_corr
+        """
         self._refresh_spectrum_view()
 
     def Undo_pic(self):
@@ -3569,11 +3351,9 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         # ----- DIALOGUE DE PROGRESSION -----
         n_tot = index_stop - index_start + 1
-        dlg = ProgressDialog(
-            figs=None,              # tu peux passer des figs si tu veux
+        dlg = ProgressDialog(             # tu peux passer des figs si tu veux
             cancel_text="Stop",
             value=0,
-            Gauges=None,
             parent=self
         )
         dlg.setLabelText(f"Multi-fit : spectres {index_start} → {index_stop}")
@@ -3592,7 +3372,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                     print("Multi-fit: canceled by user.")
                     break
 
-                print(f"Multi-fit : spectre {i}/{index_stop}")
+                #print(f"Multi-fit : spectre {i}/{index_stop}")
 
                 # Mise à jour du texte et de la barre de progression
                 dlg.setLabelText(f"Fit du spectre {i} / {index_stop}")

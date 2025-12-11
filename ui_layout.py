@@ -23,10 +23,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-
-file_help = r"txt_file\Help.txt"
-file_command = r"txt_file\Command.txt"
-
+file_help = r"txt_files\Help.txt"
+file_command = r"txt_files\Command.txt"
 
 def creat_spin_label(spinbox, label_text):
     layout = QHBoxLayout()
@@ -38,7 +36,7 @@ def creat_spin_label(spinbox, label_text):
 
 class UiLayoutMixin:
     def _setup_main_window(self):
-        self.setWindowTitle("Liberté égalité dDACité")
+        self.setWindowTitle("0.1 CEDd S&I F.Dembele")
         self.setGeometry(100, 100, 800, 800)
 
     def _setup_layout_stretch(self):
@@ -136,12 +134,12 @@ class UiLayoutMixin:
         self.deg_baseline_entry.setValue(1)
         layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
 
-        layh = QHBoxLayout()
+        """layh = QHBoxLayout()
         self.deg_baseline_auto = QCheckBox("Auto")
         self.deg_baseline_auto.setChecked(True)
         self.deg_baseline_auto.stateChanged.connect(self.f_auto_deg_baseline)
         layh.addWidget(self.deg_baseline_auto)
-        layout.addLayout(layh)
+        layout.addLayout(layh)"""
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -152,9 +150,9 @@ class UiLayoutMixin:
         title = QLabel("Filtre")
         layout.addWidget(title)
         self.filtre_type_selector = QComboBox(self)
-        self.liste_type_filtre = ['No filtre', 'SG', 'Savitzky-Golay', 'Butterworth']
+        self.liste_type_filtre = ['svg', 'fft', 'No filtre']
         self.filtre_type_selector.addItems(self.liste_type_filtre)
-        filtre_colors = ['darkblue', 'darkred', 'darkgreen', 'darkorange']
+        filtre_colors = ['darkblue', 'darkred', 'darkgreen']
         for ind, col in enumerate(filtre_colors):
             self.filtre_type_selector.model().item(ind).setBackground(QColor(col))
         self.filtre_type_selector.currentIndexChanged.connect(self.f_filtre_select)
@@ -507,7 +505,7 @@ class UiLayoutMixin:
         self.pg_text.setAspectLocked(False)
         self.pg_text.enableAutoRange(False)
 
-        self.pg_text_label = pg.TextItem("coucou")
+        self.pg_text_label = pg.TextItem("Liberté \n égalité \n dDACité")
         self.pg_text.addItem(self.pg_text_label)
         self.pg_text_label.setAnchor((0.5, 0.5))
         self.pg_text_label.setPos(0, 0)
