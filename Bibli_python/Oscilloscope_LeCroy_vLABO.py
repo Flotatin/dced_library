@@ -6,7 +6,7 @@ import pyqtgraph as pg
 import os
 import re
 from tkinter import filedialog
-
+from datetime import datetime
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QKeyEvent
@@ -26,8 +26,6 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 from scipy.signal import savgol_filter
-
-
 
 
 
@@ -318,8 +316,6 @@ class OscilloscopeViewer(QMainWindow):
         
         self.text.setText(self.text_cursor + "\n"+ self.text_code  + "\n"+ self.text_help)
     
-
-
     def connect_scope(self):
         try:
             self.scope = lecroyscope.Scope( self.id_entry.text())  # IP address of the scope "169.254.13.6"
@@ -477,7 +473,6 @@ class OscilloscopeViewer(QMainWindow):
 
         self.text.setText(self.text_cursor + "\n" +self.text_code)
 
-
     def acquire_and_display(self):
         # Code pour acquérir les traces (à partir de votre code existant)
         trace_group = self.scope.read(1, 2, 3, 4)
@@ -508,7 +503,7 @@ class OscilloscopeViewer(QMainWindow):
                    "Channel4" :pd.Series(trace_group[4].y),
                   })
         #file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "Data Files (*.dat)")
-        file_path =os.path.join(self.folder,str(self.name_save_entry.text()))
+        file_path =os.path.join(self.folder,f"{self.name_save_entry.text()}_{datetime.date()}")
         if file_path:
             with open(file_path, 'w') as file2write:
                 file2write.write(df.to_string())
