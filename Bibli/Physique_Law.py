@@ -83,7 +83,7 @@ def Ruby_1986_Mao(peakMax,lamb0=694.24,sigmalambda=None,hydro=True): #https://do
         sigmaP=sigmalambda*1904/lamb0(1+deltalambda/lamb0)**(B-1)
         return P , sigmaP
 
-def SrFCl(peakMax,lamb0=690.1,sigmalambda=None): # lambda0 fausse et article a retrouver
+def SrFCl_law(peakMax,lamb0=690.1,sigmalambda=None): # lambda0 fausse et article a retrouver
     x= (peakMax - lamb0)/lamb0
     coe1=620.6
     coe2=-4.92
