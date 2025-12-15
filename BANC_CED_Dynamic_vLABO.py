@@ -541,6 +541,11 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.viewer = Oscilo.OscilloscopeViewer(folder=os.path.join(folder_start,"Aquisition_LECROY_Banc_CEDd"))
             self.viewer.show()
 
+
+        elif key == Qt.Key_I:
+            #if hasattr(self, "ddac_fit_range"):
+            self.toggle()
+
         elif key == Qt.Key_B and modifiers & Qt.ShiftModifier: # BASE LINE
             f=self.Baseline_spectrum
             name_f="Baseline_spectrum"
@@ -3319,12 +3324,18 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         except Exception as e:
             print("Error saving current spectrum in RUN:", e)
 
-        # Récupération borne de départ / fin depuis l'UI
         index_start = int(self.index_start_entry.value())
         index_stop  = int(self.index_stop_entry.value())
 
+        # clamp...
         index_start = max(0, index_start)
         index_stop  = min(len(self.RUN.Spectra) - 1, index_stop)
+
+
+        self.index_start_entry.setValue(index_start)
+        self.index_stop_entry.setValue(index_stop)
+        self.apply_from_spin()
+
 
         if index_start > index_stop:
             self.text_box_msg.setText("Multi-fit : index_start > index_stop.")

@@ -442,6 +442,121 @@ class UiLayoutMixin:
         self.text_box_msg = QLabel("Good Luck and Have Fun")
         self.grid_layout.addWidget(self.text_box_msg, 3, 2, 1, 1)
 
+    
+    def _setup_file_gestion(self):
+        group_fichiers = QGroupBox("File gestion")
+        layout_fichiers = QVBoxLayout()
+
+        bouton_dossier = QPushButton("Select folder")
+        bouton_dossier.clicked.connect(self.parcourir_dossier)
+        layout_fichiers.addWidget(bouton_dossier)
+
+        # Sélecteur d'index de spectre
+        self.spinbox_spec_index = QSpinBox()
+        self.spinbox_spec_index.setRange(0, 0)      # sera mis à jour quand un CEDd sera chargé
+        self.spinbox_spec_index.setValue(0)
+        self.spinbox_spec_index.valueChanged.connect(self.on_spec_index_changed)
+        layout_fichiers.addLayout(creat_spin_label(self.spinbox_spec_index, "Spec index"))
+
+        self.liste_fichiers = QListWidget()
+        self.liste_fichiers.itemDoubleClicked.connect(self.PRINT_CEDd)
+        layout_fichiers.addWidget(self.liste_fichiers)
+
+        files_brute = os.listdir(self.dossier_selectionne)
+        files = sorted(
+            [f for f in files_brute],
+            key=lambda x: os.path.getctime(os.path.join(self.dossier_selectionne, x)),
+            reverse=True
+        )
+        self.liste_fichiers.addItems([f for f in files])
+        self.liste_chemins_fichiers = [os.path.join(self.dossier_selectionne, f) for f in files]
+
+        self.liste_objets_widget = QListWidget(self)
+        self.liste_objets_widget.itemDoubleClicked.connect(self.SELECT_CEDd)
+        layout_fichiers.addWidget(self.liste_objets_widget)
+
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search...")
+        self.search_bar.textChanged.connect(self.f_filter_files)
+        layout_fichiers.addWidget(self.search_bar)
+
+        group_fichiers.setLayout(layout_fichiers)
+        self.grid_layout.addWidget(group_fichiers, 2, 0, 2, 2)
+
+    def _setup_python_kernel(self):
+        self.promptBox = QGroupBox("Python Kernel")
+        promptLayout = QVBoxLayout()
+
+        self.text_edit = QTextEdit(self)
+        self.text_edit.setPlaceholderText(
+            "Enter your python code here, to use libraries start with CL., example: np.pi -> CL.np.pi..."
+        )
+        promptLayout.addWidget(self.text_edit)
+
+        self.execute_button = QPushButton("Click to run code (Shift + Entry)", self)
+        self.execute_button.clicked.connect(self.execute_code)
+        promptLayout.addWidget(self.execute_button)
+
+        self.output_display = QTextEdit(self)
+        self.output_display.setReadOnly(True)
+        self.output_display.setPlaceholderText("Output print...")
+        promptLayout.addWidget(self.output_display)
+
+        self.promptBox.setLayout(promptLayout)
+
+        # On l'ajoute à la grille mais on pourra le déplacer/reconfigurer
+        self.grid_layout.addWidget(self.promptBox, 2, 2, 1, 1)
+        self.promptBox.hide()  # caché au démarrage
+
+    def _setup_gauge_info(self):
+        self.AddBox = QGroupBox("Gauge information")
+        AddLayout = QVBoxLayout()
+
+        layh4 = QHBoxLayout()
+        layh4.addWidget(QLabel("P="))
+        self.spinbox_P = QDoubleSpinBox()
+        self.spinbox_P.setRange(-10.0, 1000.0)
+        self.spinbox_P.setSingleStep(0.1)
+        self.spinbox_P.setValue(0.0)
+        self.spinbox_P.valueChanged.connect(self.spinbox_p_move)
+        layh4.addWidget(self.spinbox_P)
+        layh4.addWidget(QLabel("GPa"))
+
+        self.deltalambdaP = 0
+
+        layh4.addWidget(QLabel("λ or σ="))
+        self.spinbox_x = QDoubleSpinBox()
+        self.spinbox_x.setRange(0, 4000)
+        self.spinbox_x.setSingleStep(0.1)
+        self.spinbox_x.setValue(0.0)
+        self.spinbox_x.valueChanged.connect(self.spinbox_x_move)
+        layh4.addWidget(self.spinbox_x)
+        layh4.addWidget(QLabel("nm or cm<sup>-1<\sup>"))
+
+        layh4.addWidget(QLabel("T="))
+        self.spinbox_T = QDoubleSpinBox()
+        self.spinbox_T.setRange(0, 3000)
+        self.spinbox_T.setSingleStep(1)
+        self.spinbox_T.setValue(293)
+        self.spinbox_T.valueChanged.connect(self.spinbox_t_move)
+        self.spinbox_T.setEnabled(False)
+        layh4.addWidget(self.spinbox_T)
+        layh4.addWidget(QLabel("K"))
+
+        self.deltalambdaT = 0
+
+        AddLayout.addLayout(layh4)
+
+        self.listbox_pic = QListWidget()
+        self.listbox_pic.doubleClicked.connect(self.select_pic)
+        AddLayout.addWidget(self.listbox_pic)
+
+        self.AddBox.setLayout(AddLayout)
+        self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
+        self.bit_modif_PTlambda = False
+
+
+"""
     def _setup_ddac_box(self):
         group_graphique = QGroupBox("dDAC")
         layout_graphique = QVBoxLayout()
@@ -637,115 +752,4 @@ class UiLayoutMixin:
             row_factors=self._ddac_row_factors,
             col_factors=self._ddac_col_factors,
         )
-
-    def _setup_file_gestion(self):
-        group_fichiers = QGroupBox("File gestion")
-        layout_fichiers = QVBoxLayout()
-
-        bouton_dossier = QPushButton("Select folder")
-        bouton_dossier.clicked.connect(self.parcourir_dossier)
-        layout_fichiers.addWidget(bouton_dossier)
-
-        # Sélecteur d'index de spectre
-        self.spinbox_spec_index = QSpinBox()
-        self.spinbox_spec_index.setRange(0, 0)      # sera mis à jour quand un CEDd sera chargé
-        self.spinbox_spec_index.setValue(0)
-        self.spinbox_spec_index.valueChanged.connect(self.on_spec_index_changed)
-        layout_fichiers.addLayout(creat_spin_label(self.spinbox_spec_index, "Spec index"))
-
-        self.liste_fichiers = QListWidget()
-        self.liste_fichiers.itemDoubleClicked.connect(self.PRINT_CEDd)
-        layout_fichiers.addWidget(self.liste_fichiers)
-
-        files_brute = os.listdir(self.dossier_selectionne)
-        files = sorted(
-            [f for f in files_brute],
-            key=lambda x: os.path.getctime(os.path.join(self.dossier_selectionne, x)),
-            reverse=True
-        )
-        self.liste_fichiers.addItems([f for f in files])
-        self.liste_chemins_fichiers = [os.path.join(self.dossier_selectionne, f) for f in files]
-
-        self.liste_objets_widget = QListWidget(self)
-        self.liste_objets_widget.itemDoubleClicked.connect(self.SELECT_CEDd)
-        layout_fichiers.addWidget(self.liste_objets_widget)
-
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search...")
-        self.search_bar.textChanged.connect(self.f_filter_files)
-        layout_fichiers.addWidget(self.search_bar)
-
-        group_fichiers.setLayout(layout_fichiers)
-        self.grid_layout.addWidget(group_fichiers, 2, 0, 2, 2)
-
-    def _setup_python_kernel(self):
-        self.promptBox = QGroupBox("Python Kernel")
-        promptLayout = QVBoxLayout()
-
-        self.text_edit = QTextEdit(self)
-        self.text_edit.setPlaceholderText(
-            "Enter your python code here, to use libraries start with CL., example: np.pi -> CL.np.pi..."
-        )
-        promptLayout.addWidget(self.text_edit)
-
-        self.execute_button = QPushButton("Click to run code (Shift + Entry)", self)
-        self.execute_button.clicked.connect(self.execute_code)
-        promptLayout.addWidget(self.execute_button)
-
-        self.output_display = QTextEdit(self)
-        self.output_display.setReadOnly(True)
-        self.output_display.setPlaceholderText("Output print...")
-        promptLayout.addWidget(self.output_display)
-
-        self.promptBox.setLayout(promptLayout)
-
-        # On l'ajoute à la grille mais on pourra le déplacer/reconfigurer
-        self.grid_layout.addWidget(self.promptBox, 2, 2, 1, 1)
-        self.promptBox.hide()  # caché au démarrage
-
-    def _setup_gauge_info(self):
-        self.AddBox = QGroupBox("Gauge information")
-        AddLayout = QVBoxLayout()
-
-        layh4 = QHBoxLayout()
-        layh4.addWidget(QLabel("P="))
-        self.spinbox_P = QDoubleSpinBox()
-        self.spinbox_P.setRange(-10.0, 1000.0)
-        self.spinbox_P.setSingleStep(0.1)
-        self.spinbox_P.setValue(0.0)
-        self.spinbox_P.valueChanged.connect(self.spinbox_p_move)
-        layh4.addWidget(self.spinbox_P)
-        layh4.addWidget(QLabel("GPa"))
-
-        self.deltalambdaP = 0
-
-        layh4.addWidget(QLabel("λ or σ="))
-        self.spinbox_x = QDoubleSpinBox()
-        self.spinbox_x.setRange(0, 4000)
-        self.spinbox_x.setSingleStep(0.1)
-        self.spinbox_x.setValue(0.0)
-        self.spinbox_x.valueChanged.connect(self.spinbox_x_move)
-        layh4.addWidget(self.spinbox_x)
-        layh4.addWidget(QLabel("nm or cm<sup>-1<\sup>"))
-
-        layh4.addWidget(QLabel("T="))
-        self.spinbox_T = QDoubleSpinBox()
-        self.spinbox_T.setRange(0, 3000)
-        self.spinbox_T.setSingleStep(1)
-        self.spinbox_T.setValue(293)
-        self.spinbox_T.valueChanged.connect(self.spinbox_t_move)
-        self.spinbox_T.setEnabled(False)
-        layh4.addWidget(self.spinbox_T)
-        layh4.addWidget(QLabel("K"))
-
-        self.deltalambdaT = 0
-
-        AddLayout.addLayout(layh4)
-
-        self.listbox_pic = QListWidget()
-        self.listbox_pic.doubleClicked.connect(self.select_pic)
-        AddLayout.addWidget(self.listbox_pic)
-
-        self.AddBox.setLayout(AddLayout)
-        self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
-        self.bit_modif_PTlambda = False
+"""

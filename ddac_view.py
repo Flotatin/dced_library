@@ -24,6 +24,13 @@ from PyQt5.QtWidgets import (
 
 from Bibli_python import CL_FD_Update as CL
 
+import numpy as np
+import pyqtgraph as pg
+from PyQt5.QtCore import QObject
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
+
+
 
 class DdacViewMixin:
     def _setup_ddac_box(self):
@@ -206,6 +213,36 @@ class DdacViewMixin:
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
+        print("init")
+        self._spectrum_limits_initialized = False
+        self._zoom_limits_initialized = False
+
+        # --- Fit range UI state ---
+        self._block = False
+        self._fit_range_visible = True
+        self._time = None
+        self._spectre_number = None
+
+        # Alias clairs (si tu veux garder tes noms existants)
+        self.index_start_entry = self.index_start_entry
+        self.index_stop_entry  = self.index_stop_entry
+
+        # --- Regions (sur les 4 graphes utiles) ---
+        self.regions = []
+        for plot in (self.pg_P, self.pg_dPdt, self.pg_sigma, self.pg_dlambda):
+            r = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+            r.setBrush(pg.mkBrush(255, 165, 0, 50))
+            #r.setPen(pg.mkPen(0, 0, 0, 160, width=1))
+            r.setZValue(10_000)  # important : toujours visible
+            plot.addItem(r)
+            r.sigRegionChanged.connect(self._on_region_changed)
+            self.regions.append(r)
+
+        # Spinbox -> region
+        self.index_start_entry.valueChanged.connect(self._on_spin_changed)
+        self.index_stop_entry.valueChanged.connect(self._on_spin_changed)
+
+
         layout_graphique.addLayout(controls_layout)
 
         group_graphique.setLayout(layout_graphique)
@@ -221,8 +258,7 @@ class DdacViewMixin:
         self.pg_sigma.scene().sigMouseClicked.connect(self._on_ddac_click)
         self.pg_dlambda.scene().sigMouseClicked.connect(self._on_ddac_click)
 
-        self._spectrum_limits_initialized = False
-        self._zoom_limits_initialized = False
+
 
         # ================== FACTEURS DE LIGNES (2, 2, 1) ==================
         self._ddac_row_factors = (4, 1, 1)
@@ -234,6 +270,106 @@ class DdacViewMixin:
             row_factors=self._ddac_row_factors,
             col_factors=self._ddac_col_factors,
         )
+
+
+        # -------------------- API --------------------
+    
+    def attach_run_axes(self, time_array, spectre_number=None):
+        """
+        time_array: state.time (temps des spectres) en secondes
+        spectre_number: state.spectre_number (si tu veux afficher des n°Spec réels)
+        """
+        t = np.asarray(time_array, dtype=float)
+        if t.ndim != 1 or len(t) < 2:
+            self._time = None
+            self._spectre_number = None
+            return
+
+        self._time = t
+        self._spectre_number = None if spectre_number is None else np.asarray(spectre_number, dtype=float)
+
+        # bornes de la region
+        tmin, tmax = float(t[0]), float(t[-1])
+        for r in self.regions:
+            r.setBounds([tmin, tmax])
+
+        # Si les spinbox ne sont pas encore réglées, on met une zone centrale visible
+        i0 = int(np.clip(self.index_start_entry.value(), 0, len(t)-1))
+        i1 = int(np.clip(self.index_stop_entry.value(), 0, len(t)-1))
+        if i0 == i1:
+            i0 = max(0, len(t)//3)
+            i1 = min(len(t)-1, 2*len(t)//3)
+            self.index_start_entry.setValue(i0)
+            self.index_stop_entry.setValue(i1)
+
+        self.apply_from_spin()
+
+    def toggle(self):
+        self._fit_range_visible = not self._fit_range_visible
+        for r in self.regions:
+            r.setVisible(self._fit_range_visible)
+    
+    def apply_from_spin(self):
+        """Spinbox (indices) -> region (temps)."""
+        if self._time is None:
+            return
+
+        i0 = int(self.index_start_entry.value())
+        i1 = int(self.index_stop_entry.value())
+        if i0 > i1:
+            i0, i1 = i1, i0
+
+        i0 = int(np.clip(i0, 0, len(self._time) - 1))
+        i1 = int(np.clip(i1, 0, len(self._time) - 1))
+
+        t0 = float(self._time[i0])
+        t1 = float(self._time[i1])
+
+        self._block = True
+        for r in self.regions:
+            r.setRegion((t0, t1))
+        self._block = False
+
+    # -------------------- Callbacks --------------------
+    def _on_spin_changed(self, *args):
+        if self._block:
+            return
+        self.apply_from_spin()
+
+    def _on_region_changed(self, *args):
+        if self._block or self._time is None:
+            return
+
+        src = self.sender()
+        if src is None:
+            return
+
+        t0, t1 = src.getRegion()
+        if t0 > t1:
+            t0, t1 = t1, t0
+
+        i0 = int(np.argmin(np.abs(self._time - t0)))
+        i1 = int(np.argmin(np.abs(self._time - t1)))
+        if i0 > i1:
+            i0, i1 = i1, i0
+
+        self._block = True
+
+        # sync toutes les regions
+        t0s, t1s = float(self._time[i0]), float(self._time[i1])
+        for r in self.regions:
+            if r is not src:
+                r.setRegion((t0s, t1s))
+
+        # update spinbox
+        self.index_start_entry.blockSignals(True)
+        self.index_stop_entry.blockSignals(True)
+        self.index_start_entry.setValue(i0)
+        self.index_stop_entry.setValue(i1)
+        self.index_start_entry.blockSignals(False)
+        self.index_stop_entry.blockSignals(False)
+
+        self._block = False
 
     def _get_state_for_run(self, run_id: Optional[str] = None) -> Optional[RunViewState]:
         if run_id is None:
@@ -273,6 +409,14 @@ class DdacViewMixin:
             self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
             self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
             self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
+
+            self.attach_run_axes(
+                time_array=state.time,
+                spectre_number=state.spectre_number
+            )
+            # optionnel : forcer la région à être dans la vue
+            self.apply_from_spin()
+
 
         self._update_movie_frame()
 
@@ -608,6 +752,14 @@ class DdacViewMixin:
         state = RunViewState(ced=self.RUN, color=c)
         state.time = Time
         state.spectre_number = spectre_number
+        # Activer la région sur les 4 graphes, bornée sur les temps de spectres
+        if state.time is not None and len(state.time) > 1:
+            self.attach_run_axes(
+                time_array=state.time,
+                spectre_number=state.spectre_number
+            )
+
+
         state.curves_P = []
         state.curves_dPdt = []
         state.curves_sigma = []
