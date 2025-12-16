@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import os
 from typing import Optional
-
+from functools import partial
 import cv2
 import matplotlib.colors as mcolors
 import numpy as np
@@ -26,10 +26,65 @@ from Bibli_python import CL_FD_Update as CL
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import QObject
-from PyQt5.QtWidgets import QShortcut
-from PyQt5.QtGui import QKeySequence
+from dataclasses import dataclass, field
 
+
+def _rgb255_to_rgb01(rgb):
+    return tuple(c / 255 for c in rgb)
+
+def _rgb01_to_hex(rgb):
+    r, g, b = (max(0, min(255, round(c * 255))) for c in rgb)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+def _blend(rgb, target, alpha):
+    # alpha=0 -> rgb ; alpha=1 -> target
+    return tuple((1 - alpha) * c + alpha * t for c, t in zip(rgb, target))
+
+TAB10 = [(  0, 0, 250),(  0, 250, 0),(  250, 0, 0) ,(250, 250, 0),(250,0,250),(0,250,250) ]
+
+
+
+def make_c_m(theme_name: str):
+    """
+    Retourne une liste de couleurs hex adaptées au thème.
+    """
+    alpha_to_white = 0.18  # thème sombre → éclaircir
+    alpha_to_black = 0.22  # thème clair  → assombrir
+
+    c_m = []
+    for rgb255 in TAB10:
+        rgb01 = _rgb255_to_rgb01(rgb255)
+
+        if theme_name == "dark":
+            rgb01 = _blend(rgb01, (1, 1, 1), alpha_to_white)
+        else:  # light
+            rgb01 = _blend(rgb01, (0, 0, 0), alpha_to_black)
+
+        c_m.append(_rgb01_to_hex(rgb01))
+
+    return c_m
+
+
+
+@dataclass
+class RunViewState:
+    """État graphique associé à un CEDd (remplace les listes parallèles)."""
+    ced: CL.CEDd
+    color_idx: str
+    time: list = field(default_factory=list)
+    spectre_number: list = field(default_factory=list)
+    curves_P: list = field(default_factory=list)
+    curves_dPdt: list = field(default_factory=list)
+    curves_sigma: list = field(default_factory=list)
+    curves_T: list = field(default_factory=list)
+    curves_dlambda: list = field(default_factory=list)
+    piezo_curve: object = None
+    corr_curve: object = None
+    cap: object = None
+    t_cam: list = field(default_factory=list)
+    index_cam: list = field(default_factory=list)
+    correlations: list = field(default_factory=list)
+    list_item: Optional[QListWidgetItem] = None
 
 
 class DdacViewMixin:
@@ -99,7 +154,7 @@ class DdacViewMixin:
         self.pg_text_label = pg.TextItem(color='w')
         font = QFont("Arial", 14)   # plus lisible
         self.pg_text_label.setFont(font)
-
+    
         self.pg_text.addItem(self.pg_text_label)
 
         # Positionnement centré
@@ -134,17 +189,11 @@ class DdacViewMixin:
         self.line_nspec = pg.InfiniteLine(angle=90, movable=False)
         self.pg_dlambda.addItem(self.line_nspec)
 
-        # Zone temporelle film (bornes)
-        self.zone_movie = [None, None]
-        self.zone_movie_lines = [
-            pg.InfiniteLine(angle=90, movable=False),
-            pg.InfiniteLine(angle=90, movable=False)
-        ]
-        for line in self.zone_movie_lines:
-            self.pg_P.addItem(line)
 
+        self.c_m_base = make_c_m(self.current_theme)
+        self.color=[]
 
-                # ================== MARQUEURS DE CLIC (SCATTER CROIX) ==================
+        # ================== MARQUEURS DE CLIC (SCATTER CROIX) ==================
         # Un scatter par graphe pour montrer la position exacte du clic
 
         self.scatter_P = pg.ScatterPlotItem(
@@ -183,7 +232,7 @@ class DdacViewMixin:
         )
         self.pg_dlambda.addItem(self.scatter_dlambda)
 
-
+      
         # ================== ÉTAT DYNAMIQUE (film) ==================
         self.current_index = 0
         self.index_playing = 0
@@ -213,35 +262,42 @@ class DdacViewMixin:
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
-        print("init")
-        self._spectrum_limits_initialized = False
-        self._zoom_limits_initialized = False
+        """Crée 2 régions (fit & camera) sur tous les graphes temporels (pas sur le film)."""
 
-        # --- Fit range UI state ---
-        self._block = False
-        self._fit_range_visible = True
-        self._time = None
-        self._spectre_number = None
+        # --- états / garde-fous ---
+        self._block_fit = False
+        self._block_cam = False
 
-        # Alias clairs (si tu veux garder tes noms existants)
-        self.index_start_entry = self.index_start_entry
-        self.index_stop_entry  = self.index_stop_entry
+        self._fit_visible = True
+        self._cam_visible = True
 
-        # --- Regions (sur les 4 graphes utiles) ---
-        self.regions = []
-        for plot in (self.pg_P, self.pg_dPdt, self.pg_sigma, self.pg_dlambda):
-            r = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
-            r.setBrush(pg.mkBrush(255, 165, 0, 50))
-            #r.setPen(pg.mkPen(0, 0, 0, 160, width=1))
-            r.setZValue(10_000)  # important : toujours visible
-            plot.addItem(r)
-            r.sigRegionChanged.connect(self._on_region_changed)
-            self.regions.append(r)
+        self._spec_time = None   # np.ndarray : temps des spectres (Time)
+        self._cam_time = None    # np.ndarray : temps caméra (t_cam)
 
-        # Spinbox -> region
-        self.index_start_entry.valueChanged.connect(self._on_spin_changed)
-        self.index_stop_entry.valueChanged.connect(self._on_spin_changed)
+        # zone caméra (utilisée dans play_movie via _get_movie_bounds)
+        self.zone_movie = [None, None]
 
+        # plots concernés (temps)
+        self._time_plots = (self.pg_P, self.pg_dPdt, self.pg_sigma, self.pg_dlambda)
+
+        # --- création des régions ---
+        self.fit_regions = []
+        self.cam_regions = []
+
+        for plot in self._time_plots:
+            r_fit = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+            r_fit.setBrush(pg.mkBrush(255, 165, 0, 45))  # orange léger
+            r_fit.setZValue(10_000)
+            plot.addItem(r_fit)
+            r_fit.sigRegionChanged.connect(partial(self._on_fit_region_changed, r_fit))
+            self.fit_regions.append(r_fit)
+
+            r_cam = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+            r_cam.setBrush(pg.mkBrush(80, 180, 255, 35))  # bleu léger
+            r_cam.setZValue(9_000)
+            plot.addItem(r_cam)
+            r_cam.sigRegionChanged.connect(partial(self._on_cam_region_changed, r_cam))
+            self.cam_regions.append(r_cam)
 
         layout_graphique.addLayout(controls_layout)
 
@@ -271,47 +327,84 @@ class DdacViewMixin:
             col_factors=self._ddac_col_factors,
         )
 
+    def _recolor_all_runs(self):
+        self.c_m_base = make_c_m(self.current_theme)  
+        for run_id, state in self.runs.items():
+            c = self._get_run_color(state)
+            # item liste
+            if state.list_item is not None:
+                state.list_item.setBackground(QColor(c))
+                state.list_item.setForeground(QColor("#000000" if self.current_theme == "light" else "#ffffff"))
 
-        # -------------------- API --------------------
-    
-    def attach_run_axes(self, time_array, spectre_number=None):
-        """
-        time_array: state.time (temps des spectres) en secondes
-        spectre_number: state.spectre_number (si tu veux afficher des n°Spec réels)
-        """
+            # courbes "run-colored"
+            if state.piezo_curve is not None:
+                state.piezo_curve.setPen(pg.mkPen(c))
+
+            if state.corr_curve is not None:
+                state.corr_curve.setPen(pg.mkPen(c))
+
+            # symbolPen dépendant du run (les symbolBrush restent gauge-colored chez toi)
+            for curve in state.curves_P:
+                curve.setSymbolPen(pg.mkPen(c))
+            for curve in state.curves_dPdt:
+                curve.setSymbolPen(pg.mkPen(c))
+            for curve in state.curves_sigma:
+                curve.setSymbolPen(pg.mkPen(c))
+            for curve in state.curves_dlambda:
+                curve.setSymbolPen(pg.mkPen(c))
+
+    def attach_spectrum_time(self, time_array):
+        """À appeler quand tu as Time (temps des spectres). Sert à borner & synchroniser FitRegion."""
         t = np.asarray(time_array, dtype=float)
         if t.ndim != 1 or len(t) < 2:
-            self._time = None
-            self._spectre_number = None
+            self._spec_time = None
             return
 
-        self._time = t
-        self._spectre_number = None if spectre_number is None else np.asarray(spectre_number, dtype=float)
-
-        # bornes de la region
+        self._spec_time = t
         tmin, tmax = float(t[0]), float(t[-1])
-        for r in self.regions:
-            r.setBounds([tmin, tmax])
 
-        # Si les spinbox ne sont pas encore réglées, on met une zone centrale visible
-        i0 = int(np.clip(self.index_start_entry.value(), 0, len(t)-1))
-        i1 = int(np.clip(self.index_stop_entry.value(), 0, len(t)-1))
-        if i0 == i1:
-            i0 = max(0, len(t)//3)
-            i1 = min(len(t)-1, 2*len(t)//3)
-            self.index_start_entry.setValue(i0)
-            self.index_stop_entry.setValue(i1)
+        for r in self.fit_regions:
+            r.setBounds((tmin, tmax))
 
-        self.apply_from_spin()
+        # initialiser une région cohérente avec les spinbox
+        self._apply_fit_from_spin()
 
-    def toggle(self):
-        self._fit_range_visible = not self._fit_range_visible
-        for r in self.regions:
-            r.setVisible(self._fit_range_visible)
-    
-    def apply_from_spin(self):
-        """Spinbox (indices) -> region (temps)."""
-        if self._time is None:
+
+    def _get_run_color(self, state: RunViewState) -> str:
+        # self.c_m_base = palette courante (liste de hex)
+        if not getattr(self, "c_m_base", None):
+            self.c_m_base = make_c_m(self.current_theme)  # ta fonction Tab10 light/dark
+        return self.c_m_base[state.color_idx % len(self.c_m_base)]
+
+    def attach_camera_time(self, time_array):
+        """À appeler quand tu as t_cam (temps caméra corrélé). Sert à borner & synchroniser CamRegion."""
+        t = np.asarray(time_array, dtype=float)
+        if t.ndim != 1 or len(t) < 2:
+            self._cam_time = None
+            return
+
+        self._cam_time = t
+        tmin, tmax = float(t[0]), float(t[-1])
+
+        for r in self.cam_regions:
+            r.setBounds((tmin, tmax))
+
+        # si zone_movie pas définie, on met tout
+        if self.zone_movie[0] is None or self.zone_movie[1] is None:
+            self.zone_movie = [tmin, tmax]
+
+        self._apply_cam_from_zone_movie()
+
+    def _on_fit_spin_changed(self, *_):
+        if self._block_fit:
+            return
+        self._apply_fit_from_spin()
+
+    def _apply_fit_from_spin(self):
+        """index_start/index_stop (indices) -> FitRegion (temps)."""
+        if self._spec_time is None:
+            return
+        if not (hasattr(self, "index_start_entry") and hasattr(self, "index_stop_entry")):
             return
 
         i0 = int(self.index_start_entry.value())
@@ -319,57 +412,109 @@ class DdacViewMixin:
         if i0 > i1:
             i0, i1 = i1, i0
 
-        i0 = int(np.clip(i0, 0, len(self._time) - 1))
-        i1 = int(np.clip(i1, 0, len(self._time) - 1))
+        i0 = int(np.clip(i0, 0, len(self._spec_time) - 1))
+        i1 = int(np.clip(i1, 0, len(self._spec_time) - 1))
 
-        t0 = float(self._time[i0])
-        t1 = float(self._time[i1])
+        t0 = float(self._spec_time[i0])
+        t1 = float(self._spec_time[i1])
 
-        self._block = True
-        for r in self.regions:
+        self._block_fit = True
+        for r in self.fit_regions:
             r.setRegion((t0, t1))
-        self._block = False
+        self._block_fit = False
 
-    # -------------------- Callbacks --------------------
-    def _on_spin_changed(self, *args):
-        if self._block:
-            return
-        self.apply_from_spin()
 
-    def _on_region_changed(self, *args):
-        if self._block or self._time is None:
-            return
+        # -------------------------
+        #  FIT : région -> spinbox
+        # -------------------------
 
-        src = self.sender()
-        if src is None:
+    def _on_fit_region_changed(self, src_region, *_):
+        """FitRegion (temps) -> index_start/index_stop (indices)."""
+        if self._block_fit or self._spec_time is None:
             return
 
-        t0, t1 = src.getRegion()
+        t0, t1 = src_region.getRegion()
         if t0 > t1:
             t0, t1 = t1, t0
 
-        i0 = int(np.argmin(np.abs(self._time - t0)))
-        i1 = int(np.argmin(np.abs(self._time - t1)))
+        i0 = int(np.argmin(np.abs(self._spec_time - t0)))
+        i1 = int(np.argmin(np.abs(self._spec_time - t1)))
         if i0 > i1:
             i0, i1 = i1, i0
 
-        self._block = True
+        self._block_fit = True
 
-        # sync toutes les regions
-        t0s, t1s = float(self._time[i0]), float(self._time[i1])
-        for r in self.regions:
-            if r is not src:
+        # sync des autres régions fit
+        t0s, t1s = float(self._spec_time[i0]), float(self._spec_time[i1])
+        for r in self.fit_regions:
+            if r is not src_region:
                 r.setRegion((t0s, t1s))
 
         # update spinbox
-        self.index_start_entry.blockSignals(True)
-        self.index_stop_entry.blockSignals(True)
-        self.index_start_entry.setValue(i0)
-        self.index_stop_entry.setValue(i1)
-        self.index_start_entry.blockSignals(False)
-        self.index_stop_entry.blockSignals(False)
+        if hasattr(self, "index_start_entry") and hasattr(self, "index_stop_entry"):
+            self.index_start_entry.blockSignals(True)
+            self.index_stop_entry.blockSignals(True)
+            self.index_start_entry.setValue(i0)
+            self.index_stop_entry.setValue(i1)
+            self.index_start_entry.blockSignals(False)
+            self.index_stop_entry.blockSignals(False)
 
-        self._block = False
+        self._block_fit = False
+
+    def _apply_cam_from_zone_movie(self):
+        """zone_movie (t0,t1) -> CamRegion (temps)."""
+        if self._cam_time is None:
+            return
+        if self.zone_movie[0] is None or self.zone_movie[1] is None:
+            return
+
+        t0, t1 = float(self.zone_movie[0]), float(self.zone_movie[1])
+        if t0 > t1:
+            t0, t1 = t1, t0
+
+        # clip dans bornes caméra
+        t0 = float(np.clip(t0, float(self._cam_time[0]), float(self._cam_time[-1])))
+        t1 = float(np.clip(t1, float(self._cam_time[0]), float(self._cam_time[-1])))
+
+        self._block_cam = True
+        for r in self.cam_regions:
+            r.setRegion((t0, t1))
+        self._block_cam = False
+
+    def _on_cam_region_changed(self, src_region, *_):
+        """CamRegion (temps) -> zone_movie + sync autres CamRegion."""
+        if self._block_cam or self._cam_time is None:
+            return
+
+        t0, t1 = src_region.getRegion()
+        if t0 > t1:
+            t0, t1 = t1, t0
+
+        # bornage
+        t0 = float(np.clip(t0, float(self._cam_time[0]), float(self._cam_time[-1])))
+        t1 = float(np.clip(t1, float(self._cam_time[0]), float(self._cam_time[-1])))
+
+        self._block_cam = True
+
+        # sync autres cam regions
+        for r in self.cam_regions:
+            if r is not src_region:
+                r.setRegion((t0, t1))
+
+        # update zone_movie (pour play_movie / _get_movie_bounds)
+        self.zone_movie = [t0, t1]
+
+        self._block_cam = False
+
+    def toggle_fit_region(self):
+        self._fit_visible = not self._fit_visible
+        for r in self.fit_regions:
+            r.setVisible(self._fit_visible)
+
+    def toggle_cam_region(self):
+        self._cam_visible = not self._cam_visible
+        for r in self.cam_regions:
+            r.setVisible(self._cam_visible)
 
     def _get_state_for_run(self, run_id: Optional[str] = None) -> Optional[RunViewState]:
         if run_id is None:
@@ -402,6 +547,7 @@ class DdacViewMixin:
             self.current_index = len(state.index_cam) // 2
             self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
+            self.attach_camera_time(time_array=state.time)
 
         if state.time is not None and len(state.time)>0:
             x_min, x_max = min(state.time), max(state.time)
@@ -409,13 +555,9 @@ class DdacViewMixin:
             self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
             self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
             self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
+            self.attach_spectrum_time(time_array=state.time)
 
-            self.attach_run_axes(
-                time_array=state.time,
-                spectre_number=state.spectre_number
-            )
-            # optionnel : forcer la région à être dans la vue
-            self.apply_from_spin()
+            self._apply_fit_from_spin()
 
 
         self._update_movie_frame()
@@ -506,30 +648,6 @@ class DdacViewMixin:
 
         vb_dlambda = self.pg_dlambda.getViewBox()
         self._apply_viewbox_limits(vb_dlambda, x_time, state.curves_dlambda)
-
-    def f_zone_movie(self):
-        """Sélection / reset d'une zone temporelle de film (2 bornes)."""
-        state = self._get_state_for_run()
-        if state is None or not state.t_cam:
-            return
-
-        t_current = state.t_cam[self.current_index]
-
-        if self.zone_movie[0] is None:
-            self.zone_movie[0] = t_current
-            self.zone_movie_lines[0].setPos(t_current)
-            return
-        elif self.zone_movie[1] is None:
-            self.zone_movie[1] = t_current
-            self.zone_movie_lines[1].setPos(t_current)
-            return
-        else:
-            # Reset
-            self.zone_movie = [None, None]
-            t_min = state.t_cam[0]
-            t_max = state.t_cam[-1]
-            self.zone_movie_lines[0].setPos(t_min)
-            self.zone_movie_lines[1].setPos(t_max)
 
     def update(self,val): # pour la barre de défilmetn des images
         self.current_index=int(val)
@@ -724,19 +842,18 @@ class DdacViewMixin:
         self.index_select = len(self.liste_objets) - 1
         self.RUN = objet_run
 
-        # Couleur dédiée à ce run
-        c = self.c_m[0] if self.c_m else "#ffffff"
-        self.color.append(c)
-        if self.c_m:
-            del self.c_m[0]
+        # ---- choisir un index stable pour ce run
+        # option simple : index = nombre de runs déjà chargés (stable tant que tu ne “réordonne” pas)
+        color_idx = len(self.runs)
+
+        state = RunViewState(ced=self.RUN, color_idx=color_idx)
+        c = self._get_run_color(state)
+
 
         name_select = name_select or CL.os.path.basename(self.RUN.CEDd_path)
         item_run = QListWidgetItem(name_select)
         item_run.setBackground(QColor(c))
-        dark_c = mcolors.rgb2hex(
-            tuple(min(1, cc * 0.5) for cc in mcolors.hex2color(c))
-        )
-        item_run.setForeground(QColor(dark_c))
+        item_run.setForeground(QColor("#000000" if self.current_theme == "light" else "#ffffff"))
         item_run.setData(Qt.UserRole, run_id)
         self.liste_objets_widget.addItem(item_run)
 
@@ -749,152 +866,103 @@ class DdacViewMixin:
         self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
         self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
 
-        state = RunViewState(ced=self.RUN, color=c)
         state.time = Time
-        state.spectre_number = spectre_number
-        # Activer la région sur les 4 graphes, bornée sur les temps de spectres
-        if state.time is not None and len(state.time) > 1:
-            self.attach_run_axes(
-                time_array=state.time,
-                spectre_number=state.spectre_number
-            )
-
-
-        state.curves_P = []
-        state.curves_dPdt = []
-        state.curves_sigma = []
-        state.curves_T = []
-        state.curves_dlambda = []
-        state.piezo_curve = None
-        state.corr_curve = None
-        state.index_cam = []
-        state.t_cam = []
-        state.correlations = []
+        state.spectre_number = self.RUN.list_nspec
         state.list_item = item_run
+        if state.t_cam and len(state.t_cam) > 1:
+            self.attach_camera_time(state.t_cam)
 
-        self.runs[run_id] = state
-        self.current_run_id = run_id
+        # Courbes P / dPdt / sigma / T
 
-        if self.RUN.data_movie is not None:
-            try:
-                t_cam, index_cam, _ = CL.Correl_Image_amp(
-                    self.RUN.data_movie["t"],
-                    self.RUN.data_movie["signal"],
-                    time_amp,
-                    amp,
-                )
-                state.t_cam = t_cam
-                state.index_cam = [int(x) for x in index_cam]
-                state.cap = self.RUN.Movie
-
-                self.cap = self.RUN.Movie
-                self.index_cam = state.index_cam
-                self.t_cam = state.t_cam
-
-                self.line_t_P.setPos(t_cam[len(t_cam)//2])
-                self.line_t_dPdt.setPos(t_cam[len(t_cam)//2])
-                self.line_t_sigma.setPos(t_cam[len(t_cam)//2])
-                self.zone_movie_lines[0].setPos(t_cam[0])
-                self.zone_movie_lines[1].setPos(t_cam[-1])
-
-                self.correlations = _
-                state.correlations = _
-
-                state.corr_curve = self.pg_sigma.plot(pen=pg.mkPen(state.color))
-
-                self.line_nspec.setPos(spectre_number[len(t_cam)//2])
-
-                self.current_index = len(state.index_cam)//2 if state.index_cam else 0
-
-                self.slider.setMaximum(max(0, len(state.index_cam) - 1))
-                self.slider.setValue(self.current_index)
-
-                state.cap.set(cv2.CAP_PROP_POS_FRAMES, state.index_cam[self.current_index])
-                ret, frame = state.cap.read()
-                if ret:
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    self.img_item.setImage(frame, autoLevels=True)
-
-                # Première position des lignes de zone_movie aux bornes min/max temps
-                if state.t_cam and len(state.t_cam) >= 2:
-                    self.zone_movie[0] = state.t_cam[0]
-                    self.zone_movie[1] = state.t_cam[-1]
-                    self.zone_movie_lines[0].setPos(self.zone_movie[0])
-                    self.zone_movie_lines[1].setPos(self.zone_movie[1])
-            except Exception as e:
-                print("Erreur correlation :", e)
-
-        # Création des courbes PyQtGraph
         for i, G in enumerate(Gauges_RUN):
-            l_p_filtre = CL.savgol_filter(l_P[i], 10, 1) if len(l_P[i]) > 0 else np.array([])
-            if len(l_p_filtre) > 4 and len(Time) > 4:
-                dps = [
-                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
-                    for x in range(2, len(l_p_filtre) - 2)
-                ]
-                time_dps = Time[2:-2]
+            if len(l_P[i]) >= 10:
+                l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
             else:
-                dps = []
-                time_dps = []
-
-            curve_kwargs = dict(
-                pen=pg.mkPen(G.color_print[0], width=1),
-                symbol='d',
-                symbolPen=None,
-                symbolBrush=G.color_print[0],
-                symbolSize=4,
+                l_p_filtre =l_P[i]
+            dps = [
+                (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                for x in range(2, len(l_p_filtre) - 2)
+            ]
+            state.curves_P.append(
+                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
+            )   
+            state.curves_dPdt.append(
+                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
             )
-
-            cP = self.pg_P.plot(Time, l_P[i], **curve_kwargs)
-            cSigma = self.pg_sigma.plot(Time, l_fwhm[i], **curve_kwargs)
-            cDps = self.pg_dPdt.plot(time_dps, dps, **curve_kwargs)
-
-            state.curves_P.append(cP)
-            state.curves_sigma.append(cSigma)
-            state.curves_dPdt.append(cDps)
-
-        has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
-        if has_T:
-            # Tracé de T
-            cT = self.pg_dPdt.plot(
-                Time,
-                l_T[-1],
-                pen=pg.mkPen('darkred'),
-                symbol='t',
-                symbolBrush='darkred',
-                symbolSize=6,
+            state.curves_sigma.append(
+                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
             )
-            state.curves_T.append(cT)
+        if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
+            state.curves_T.append(
+                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
+            )
+        else:
+            state.curves_T.append(self.pg_dPdt.plot([], []))
 
+        # Piezo
         if self.RUN.data_Oscillo is not None:
-            cPiezo = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(state.color))
-            state.piezo_curve = cPiezo
+            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c))
+        else:
+            state.piezo_curve = self.pg_P.plot([], [])
 
-        # Δλ
         for spe in l_spe:
-            cdLambda = self.pg_dlambda.plot(
-                Time,
-                spe,
-                pen=None,
-                symbol='+',
-                symbolPen=pg.mkPen(state.color),
-            )
-            state.curves_dlambda.append(cdLambda)
+            if spe is not []:
+                state.curves_dlambda.append(
+                    self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
+                )
 
+        # Film
+        if self.RUN.folder_Movie is not None:
+            t0_movie = getattr(self.RUN, 't0_movie', 0)
+            cap, fps, nb_frames = self.Read_Movie(self.RUN)
+            state.cap = cap
+            gray_l = []
+            nb_c = 5
+
+            for i in range(nb_frames):
+                t_c = i / fps + t0_movie
+                if Time[0] < t_c < Time[-1]:
+                    state.t_cam.append(t_c)
+                    state.index_cam.append(i)
+                    if self.var_bouton[3].isChecked():
+                        correlation = 0
+                        gray_curr = self.read_frame(cap, i, unit="gray")
+                        for gray in gray_l:
+                            correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
+                        state.correlations.append(correlation)
+                        if len(gray_l) > nb_c:
+                            del gray_l[0]
+                        gray_l.append(gray_curr)
+
+            if self.var_bouton[3].isChecked() and state.correlations:
+                state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
+                state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
+            else:
+                state.corr_curve = self.pg_dPdt.plot([], [])
+
+            self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
+            if state.index_cam:
+                self.Num_im = state.index_cam[self.current_index]
+                t = state.t_cam[self.current_index]
+                Frame = self.read_frame(cap, self.Num_im)
+                if Frame is not None:
+                    self.img_item.setImage(np.array(Frame), autoLevels=True)
+
+            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
+            self.slider.setValue(self.current_index)
+            self._update_movie_frame()
+        else:
+            self.Num_im = 0
+            t = Time[0]
+            state.corr_curve = self.pg_dPdt.plot([], [])
+
+        # Enregistre l'état et finalise l'affichage
+        self.runs[run_id] = state
+        self._finalize_run_selection(state, name_select)
         self._refresh_ddac_limits(state)
 
-        # Ajout d'une ligne horizontale pour le sigma (position y = 0)
-        # (la ligne est déjà ajoutée à pg_P, on peut en ajouter une autre pour pg_sigma
-        # si tu veux, mais ici on conserve le comportement actuel)
+    
 
-        # Mémorise l'item dans l'état
-        state.list_item = item_run
-
-        # Sélectionne l'item dans la liste
-        item_run.setSelected(True)
-
-        # Sélection initiale
-        self._finalize_run_selection(state, name_select)
 
     def f_text_CEDd_print(self, t):
         """Met à jour le texte d'information dDAC dans le TextItem PyQtGraph."""
@@ -1167,7 +1235,7 @@ class DdacViewMixin:
             return 0, -1  # cas degénéré
 
         # Pas de zone définie : on lit tout
-        if self.zone_movie[0] is None or self.zone_movie[1] is None:
+        if self.zone_movie[0] is None or self.zone_movie[1] is None or not self._cam_visible:
             return 0, nb - 1
 
         t0, t1 = self.zone_movie

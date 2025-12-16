@@ -132,14 +132,6 @@ class SpectrumViewMixin:
         self.bit_modif_jauge = False
         self.bit_load_jauge = False
         self.bit_filtre = False
-
-        # Couleurs pour les jauges
-        self.c_m = [
-            "#ffcccc", "#ffe9cc", "#fdffcc", "#e3ffcc", "#ccffef",
-            "#ccf0ff", "#ccd6ff", "#e1ccff", "#fbccff", "#ffcce8"
-        ]
-        self.color = []
-
         # ================== INTÉGRATION UI ==================
         SpectraBoxFirstLayout.addWidget(self.pg_spec)
 
@@ -1336,104 +1328,83 @@ class SpectrumViewMixin:
             # Gestion des zones de fit : uniquement logique (plus de remplissage Matplotlib)
             if getattr(S, "indexX", None) is not None:
                 for i in range(nb_j):
-                    self.Zone_fit[i] = S.indexX
-                    self.Spectrum.Gauges[i].indexX = self.Zone_fit[i]
-
-            # jauges / pics
-            self.list_name_gauges = []
-            self.Param0 = []
-            self.Param_FIT = []
-            self.Nom_pic = []
-            self.list_text_pic = []
-            self.J = []
-            self.Spec_fit = []
-            self.plot_fit = []
-            self.plot_pic = []
-            self.plot_pic_fit = []
-            self.list_y_fit_start = []
-            self.z1 = []
-            self.z2 = []
-            self.y_fit_start = None
-
-            self.listbox_pic.clear()
-
-            # Reconstruction à partir de S.Gauges
-            if getattr(S, "Gauges", None) is not None:
-                for J in S.Gauges:
-                    self.Update_var(J.name)
-
-                for i, J in enumerate(S.Gauges):
-                    self.z1[i] = J.x[0]
-                    self.z2[i] = J.x[-1]
-
-                    self.list_text_pic[i].clear()
-                    self.J[i] = 0
-                    self.listbox_pic.clear()
-
-                    # Si la jauge a déjà des pics, on les transfère
-                    if getattr(J, "pics", None):
-                        for p in J.pics:
-                            try:
-                                coeffs = np.array([float(x[0]) for x in p.coef_spe])
-                            except Exception:
-                                coeffs = np.array([])
-
-                            self.Nom_pic[i].append(p.name)
-                            self.Param0[i].append([
-                                p.ctr,
-                                p.ampH,
-                                p.sigma,
-                                coeffs,
-                                p.model_fit,
-                            ])
-                            new_name = (
-                                f"{self.Nom_pic[i][-1]}   X0:{p.ctr}   Y0:{p.ampH}"
-                                f"   sigma:{p.sigma}   Coef:{coeffs} ; Modele:{p.model_fit}"""
-                            )
-                            self.list_text_pic[i].append(new_name)
-                            self.listbox_pic.addItem(new_name)
-                            self.J[i] += 1
-
-                            # stockage courbes y_fit_start :
-                            if getattr(S, "y_fit", None) is not None:
-                                # on reconstruit y_fit_start pour chaque pic en retirant le reste
-                                try:
-                                    y_pic = p.model.eval(p.model.make_params(), x=S.wnb)
-                                    self.list_y_fit_start[i].append(y_pic)
-                                except Exception:
-                                    self.list_y_fit_start[i].append(None)
-
-                        if getattr(J, "lamb_fit", None) is not None:
-                            self.spinbox_P.setValue(J.P)
-                            self.lamb0_entry.setText(str(J.lamb_fit))
-                            self.name_gauge.setText("Fit")
-                            self.bit_modif_jauge = True
-                            self.J[i] = J.nb_pic
-
-            # Fit total / y_fit_start
-            self.y_fit_start = getattr(S, "y_fit", None)
-
-            # Reconstruction index_zone
-            if getattr(S, "indexX", None) is not None:
+                    self.Zone_fit[i] = S.Gauges[i].indexX
+                # La jauge 0 garde aussi la zone globale
                 self.Zone_fit[0] = S.indexX
-                self.X_s[0] = S.wnb[S.indexX][0]
-                self.X_e[0] = S.wnb[S.indexX][-1]
 
-            # --- Signatures fit ---
-            if hasattr(S, "bit_fit"):
-                self.bit_fit_T = S.bit_fit
-            if hasattr(S, "bit_print_fit"):
-                self.bit_print_fit_T = S.bit_print_fit
+            # Reconstruction du modèle global si besoin
+            if S.model is None and getattr(S, "Gauges", None):
+                S.model = None
+                for j, g in enumerate(S.Gauges):
+                    g.Update_model()
+                    if j == 0:
+                        S.model = g.model
+                    else:
+                        S.model += g.model
 
-            # On remplit listbox_pic avec la jauge 0 par défaut
+            # (re)construction des listes de pics
+            self.Nom_pic = [[] for _ in range(nb_j)]
+            self.list_text_pic = [[] for _ in range(nb_j)]
+            self.Param0 = [[] for _ in range(nb_j)]
+            self.J = [0 for _ in range(nb_j)]
+            self.list_y_fit_start = [[] for _ in range(nb_j)]
+            self.list_name_gauges = []
+
+            if getattr(S, "Gauges", None):
+                for i, Jg in enumerate(S.Gauges):
+                    self.list_name_gauges.append(Jg.name)
+                    for j, p in enumerate(Jg.pics):
+                        self.Nom_pic[i].append(p.name)
+                        new_P0, param = p.Out_model()
+                        # new_P0 = [X0, Y0, sigma, coef]
+                        self.Param0[i].append(new_P0 + [p.model_fit])
+                        new_name = (
+                            p.name
+                            + "   X0:" + str(self.Param0[i][-1][0])
+                            + "   Y0:" + str(self.Param0[i][-1][1])
+                            + "   sigma:" + str(self.Param0[i][-1][2])
+                            + "   Coef:" + str(self.Param0[i][-1][3])
+                            + " ; Modele:" + str(self.Param0[i][-1][4])
+                        )
+                        self.J[i] += 1
+                        self.list_text_pic[i].append(new_name)
+                        y_plot = p.model.eval(param, x=S.wnb)
+                        self.list_y_fit_start[i].append(y_plot)
+
+            # Mise à jour des infos de filtre et baseline
+            if hasattr(self, "filtre_type_selector") and getattr(S, "type_filtre", None) is not None:
+                index = self.filtre_type_selector.findText(S.type_filtre)
+                if index != -1:
+                    self.filtre_type_selector.setCurrentIndex(index)
+
+            if getattr(S, "param_f", None) is not None and len(S.param_f) >= 2:
+                self.param_filtre_1_entry.setText(str(S.param_f[0]))
+                self.param_filtre_2_entry.setText(str(S.param_f[1]))
+
+            if hasattr(S, "deg_baseline"):
+                self.deg_baseline_entry.setValue(S.deg_baseline)
+
+            self._spectrum_limits_initialized = False
+            self._zoom_limits_initialized = False
+
+            # -> Data_treatement + y_fit_start + refresh graph
+            self.Baseline_spectrum()
+
+            # Mise à jour UI jauge/pics
             self.listbox_pic.clear()
-            if getattr(self.list_text_pic, "__len__", None) and len(self.list_text_pic) > 0:
-                for txt in self.list_text_pic[0]:
-                    self.listbox_pic.addItem(txt)
-
-        self.name_gauge.setStyleSheet("background-color: green;")
-        self.Auto_pic()
-
+            if getattr(S, "Gauges", None):
+                self.index_jauge = 0
+                if self.list_name_gauges:
+                    try:
+                        idx_gauge = self.liste_type_Gauge.index(self.list_name_gauges[self.index_jauge])
+                        self.Gauge_type_selector.setCurrentIndex(idx_gauge)
+                    except ValueError:
+                        # nom inconnu → on n'impose pas l'index du combo
+                        pass
+                self.LOAD_Gauge()
+            else:
+                self.index_jauge = -1
+    
     def f_index_gauge(self,spec):
         l_name = [ga.name for ga in spec.Gauges]
         try:

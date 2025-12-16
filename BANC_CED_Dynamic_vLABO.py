@@ -146,6 +146,19 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.data_Spectro=None
         self.RUN = None
 
+        # Autres attributs divers
+        self.viewer = None
+        self.bit_c_reduite = True
+
+        # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
+        self.runs = {}
+        self.current_run_id = None
+
+        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = run_id
+        self.liste_objets = []  # liste des CEDd chargés (legacy)
+        self.index_select = -1
+
+
         # États init pour éviter les accès à des attributs non initialisés
         self.bit_dP = 0
         self.Pstart = 0.0
@@ -187,17 +200,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         self._apply_theme(self.current_theme)
 
-        # Autres attributs divers
-        self.viewer = None
-        self.bit_c_reduite = True
-
-        # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
-        self.runs = {}
-        self.current_run_id = None
-
-        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = run_id
-        self.liste_objets = []  # liste des CEDd chargés (legacy)
-        self.index_select = -1
+        
 
         # Initialisation logique légère
         self.load_latest_file()
@@ -344,10 +347,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.line_nspec.setPen(line_pen)
             self.line_p0.setPen(self._mk_pen(pens["baseline_time"]))
 
-            zone_pen = self._mk_pen(pens["zone_movie"])
-            for line in self.zone_movie_lines:
-                line.setPen(zone_pen)
-
             scatter_pen = self._mk_pen(pens["scatter"])
             # scatter_* sont des ScatterPlotItem : on met le "pen" (contour)
             self.scatter_P.setPen(scatter_pen)
@@ -359,6 +358,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         if hasattr(self, "pg_text"):
             # pg_text est un ViewBox, pas un PlotItem : on met juste le fond
             self.pg_text.setBackgroundColor(theme["plot_background"])
+
+        self._recolor_all_runs()
 
         # ================== POLICES DES AXES ==================
         font = QFont("Segoe UI", 11)
@@ -544,7 +545,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         elif key == Qt.Key_I:
             #if hasattr(self, "ddac_fit_range"):
-            self.toggle()
+            self.toggle_fit_region()
 
         elif key == Qt.Key_B and modifiers & Qt.ShiftModifier: # BASE LINE
             f=self.Baseline_spectrum
@@ -579,7 +580,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             f=self.toggle_colonne
 
         elif key == Qt.Key_Z :
-                f=self.f_zone_movie
+                f=self.toggle_cam_region()
          
         elif key == Qt.Key_O and modifiers & Qt.ShiftModifier : #DELL JAUGE
             f=self.Dell_Jauge
@@ -957,7 +958,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
     def f_filter_files(self):
         filter_text = self.search_bar.text().lower()
-        filtered_files = [f.lower() for f in self.liste_chemins_fichiers  if filter_text in f.lower()]
+        filtered_files = [f.lower() for f in self.liste_chemins_fichiers if filter_text in f.lower()]
         self.liste_fichiers.clear()
         self.liste_fichiers.addItems(filtered_files)
 
@@ -1439,7 +1440,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             if is_better
             else f"{text_base} LESS GOOD you can Cancel"
         )
-       
+        temp_curve_fit = None
+        temp_curve_dy = None
         # 3) Interaction utilisateur / ou auto en bypass
         if not self.bit_bypass:
             # Traces provisoires (PyQtGraph)
@@ -1539,7 +1541,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             x_fit=x_fit,
             y_fit=y_fit,
             fit=fit,
-            color=self.c_m[j],
+            color="r",
             text_base="Curve_fit",
             use_abs=True,
         )
@@ -1958,358 +1960,14 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.slider.setValue(self.current_index)
         self._update_movie_frame()
         self.label_CED.setText( f"CEDd {item.text()} fps :{text_fps}")
-        if state.time:
+        if state.time is not None:
             x_min,x_max=min(state.time),max(state.time)
             self.pg_P.setXRange(x_min,x_max,padding=0.01)
             self.pg_dPdt.setXRange(x_min,x_max,padding=0.01)
             self.pg_sigma.setXRange(x_min,x_max,padding=0.01)
             self.pg_dlambda.setXRange(x_min,x_max,padding=0.01)
 
-    def PRINT_CEDd(self, item=None, objet_run=None):
-        """
-        - Si item est donné (clic dans self.liste_fichiers) et objet_run est None :
-            -> on charge depuis un fichier si c'est la première fois
-            -> sinon on récupère l'objet déjà en mémoire (file_index_map)
-        - Si objet_run est donné (création d'un nouveau CEDd) :
-            -> on l'ajoute à la liste interne, sans passer par la liste de fichiers
-        """
-        # Sécu : s'assurer que la map existe
-        if not hasattr(self, "file_index_map"):
-            self.file_index_map = {}
-
-        self._save_current_run()
-
-        run_id = None
-        state = None
-        name_select = None
-
-        # ------------------------------------------------------------------
-        # CAS 1 : on vient d'un clic dans la liste de fichiers (item non None)
-        # ------------------------------------------------------------------
-        if objet_run is None and item is not None:
-            chemin_fichier = os.path.join(self.dossier_selectionne, item.text())
-            index_file = self.liste_fichiers.row(item)
-
-            if index_file not in self.file_index_map:
-                try:
-                    objet_run = CL.LOAD_CEDd(chemin_fichier)
-                except Exception as e:
-                    print("Erreur LOAD_CEDd:", e)
-                    self.text_box_msg.setText(f"Erreur chargement CEDd : {e}")
-                    return
-                run_id = self._get_run_id(objet_run)
-                self.file_index_map[index_file] = run_id
-                name_select = item.text()
-            else:
-                run_id = self.file_index_map[index_file]
-                state = self.runs.get(run_id)
-                name_select = item.text()
-
-        # ------------------------------------------------------------------
-        # CAS 2 : on reçoit directement un CEDd (objet_run != None)
-        # ------------------------------------------------------------------
-        elif objet_run is not None:
-            run_id = self._get_run_id(objet_run)
-            state = self.runs.get(run_id)
-            name_select = CL.os.path.basename(objet_run.CEDd_path) if hasattr(objet_run, "CEDd_path") else "CEDd_new"
-        else:
-            return
-
-        # Si un état existe déjà : on réutilise les courbes et on restaure l'UI
-        if state is not None:
-            self._finalize_run_selection(state, name_select)
-            return
-
-        # ------------------------------------------------------------------
-        # Création d'un nouvel état RunViewState
-        # ------------------------------------------------------------------
-        if objet_run is None:
-            return
-
-        self.liste_objets.append(objet_run)
-        self.index_select = len(self.liste_objets) - 1
-        self.RUN = objet_run
-
-        # Couleur dédiée à ce run
-        c = self.c_m[0] if self.c_m else "#ffffff"
-        self.color.append(c)
-        if self.c_m:
-            del self.c_m[0]
-
-        name_select = name_select or CL.os.path.basename(self.RUN.CEDd_path)
-        item_run = QListWidgetItem(name_select)
-        item_run.setBackground(QColor(c))
-        dark_c = mcolors.rgb2hex(
-            tuple(min(1, cc * 0.5) for cc in mcolors.hex2color(c))
-        )
-        item_run.setForeground(QColor(dark_c))
-        item_run.setData(Qt.UserRole, run_id)
-        self.liste_objets_widget.addItem(item_run)
-
-        # Lecture des données CEDd
-        l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
-
-        # Axes temps
-        self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
-        self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
-        self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
-        self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
-
-        state = RunViewState(ced=self.RUN, color=c)
-        state.time = Time
-        state.spectre_number = self.RUN.list_nspec
-        state.list_item = item_run
-
-        # Courbes P / dPdt / sigma / T
-
-        for i, G in enumerate(Gauges_RUN):
-            print(G.name)
-            l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
-            dps = [
-                (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
-                for x in range(2, len(l_p_filtre) - 2)
-            ]
-            state.curves_P.append(
-                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-            )
-            state.curves_dPdt.append(
-                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-            )
-            state.curves_sigma.append(
-                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=None, symbolBrush=G.color_print[0], symbolSize=4)
-            )
-        if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
-            state.curves_T.append(
-                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
-            )
-        else:
-            state.curves_T.append(self.pg_dPdt.plot([], []))
-
-        # Piezo
-        if self.RUN.data_Oscillo is not None:
-            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c))
-        else:
-            state.piezo_curve = self.pg_P.plot([], [])
-
-        for spe in l_spe:
-            if spe is not []:
-                state.curves_dlambda.append(
-                    self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
-                )
-
-        # Film
-        if self.RUN.folder_Movie is not None:
-            t0_movie = getattr(self.RUN, 't0_movie', 0)
-            cap, fps, nb_frames = self.Read_Movie(self.RUN)
-            state.cap = cap
-            gray_l = []
-            nb_c = 5
-
-            for i in range(nb_frames):
-                t_c = i / fps + t0_movie
-                if Time[0] < t_c < Time[-1]:
-                    state.t_cam.append(t_c)
-                    state.index_cam.append(i)
-                    if self.var_bouton[3].isChecked():
-                        correlation = 0
-                        gray_curr = self.read_frame(cap, i, unit="gray")
-                        for gray in gray_l:
-                            correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
-                        state.correlations.append(correlation)
-                        if len(gray_l) > nb_c:
-                            del gray_l[0]
-                        gray_l.append(gray_curr)
-
-            if self.var_bouton[3].isChecked() and state.correlations:
-                state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
-                state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
-            else:
-                state.corr_curve = self.pg_dPdt.plot([], [])
-
-            self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
-            if state.index_cam:
-                self.Num_im = state.index_cam[self.current_index]
-                t = state.t_cam[self.current_index]
-                Frame = self.read_frame(cap, self.Num_im)
-                if Frame is not None:
-                    self.img_item.setImage(np.array(Frame), autoLevels=True)
-
-            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
-            self.slider.setValue(self.current_index)
-            self._update_movie_frame()
-        else:
-            self.Num_im = 0
-            t = Time[0]
-            state.corr_curve = self.pg_dPdt.plot([], [])
-
-        # Enregistre l'état et finalise l'affichage
-        self.runs[run_id] = state
-        self._finalize_run_selection(state, name_select)
-        self._refresh_ddac_limits(state)
-
-    def LOAD_Spectrum(self, item=None, Spectrum=None):
-        """Charge un spectre dans self.Spectrum et reconstruit toute la structure de fit (sans Matplotlib)."""
-        save_index_spec = -1
-        old_spectrum = self.Spectrum
-        nb_j_old = len(old_spectrum.Gauges) if old_spectrum is not None else 0
-
-        self._clear_selected_peak_overlay()
-        bypass = False  # valeur par défaut
-
-        # =========================
-        # 1) Sélection de Spectrum
-        # =========================
-        if Spectrum is None:
-            # On vient de l'UI (spinner / listbox)
-            if not self.bit_bypass and old_spectrum is not None:
-                # On sauvegarde le spectre courant dans le RUN (si possible)
-                try:
-                    self.RUN.Spectra[self.index_spec] = old_spectrum
-                except Exception:
-                    self.text_box_msg.setText("ERROR Load Spec")
-                    return
-
-                save_index_spec = self.spinbox_spec_index.value()
-
-            # Choix de l'index de spectre cible
-            if save_index_spec >= 0:
-                target_index = save_index_spec
-            else:
-                target_index = self.index_spec
-
-            # Si on change réellement de spectre
-            if target_index != self.index_spec:
-                if not self.bit_bypass:
-                    self.index_spec = target_index
-
-            # Nouveau spectre de référence
-            try:
-                new_spec = self.RUN.Spectra[self.index_spec]
-            except (AttributeError, IndexError, TypeError):
-                self.text_box_msg.setText("ERROR: invalid spectrum index")
-                return
-
-            new_has_fit = getattr(new_spec, "bit_fit", False)
-            old_has_fit = getattr(old_spectrum, "bit_fit", False) if old_spectrum is not None else False
-
-            if new_has_fit:
-                # On prend directement le spectre du RUN (déjà fitté)
-                self.Spectrum = new_spec
-            elif old_has_fit:
-                # On garde les paramètres de fit de l'ancien, mais on remplace jauges/modèle
-                save_J = copy.deepcopy(new_spec.Gauges)
-                save_M = copy.deepcopy(new_spec.model)
-                self.Spectrum = copy.deepcopy(old_spectrum)
-                self.Spectrum.Gauges = save_J
-                self.Spectrum.model = save_M
-                bypass = True
-            else:
-                # Pas de fit ni dans l'ancien, ni dans le nouveau : simple copie
-                self.Spectrum = copy.deepcopy(new_spec)
-
-        else:
-            # Chargement direct d'un objet Spectre
-            self.Spectrum = Spectrum
-            bypass = True
-            self.bit_bypass = False
-
-        S = self.Spectrum
-        if S is None:
-            self.text_box_msg.setText("ERROR: no Spectrum loaded")
-            return
-
-        # =========================================
-        # 2) Réinitialise toute la structure de fit
-        # =========================================
-        has_global_fit = getattr(S, "bit_fit", False)
-        has_gauge_fit = any(getattr(G, "bit_fit", False) for G in getattr(S, "Gauges", []))
-
-        if has_global_fit or bypass or self.bit_bypass or has_gauge_fit:
-            nb_j = len(S.Gauges) if S.Gauges is not None else 0
-            self.Zone_fit = [None for _ in range(nb_j)]
-            self.X_s = [None for _ in range(nb_j)]
-            self.X_e = [None for _ in range(nb_j)]
-            self.bit_fit = [False for _ in range(nb_j)]
-
-            # Gestion des zones de fit : uniquement logique (plus de remplissage Matplotlib)
-            if getattr(S, "indexX", None) is not None:
-                for i in range(nb_j):
-                    self.Zone_fit[i] = S.Gauges[i].indexX
-                # La jauge 0 garde aussi la zone globale
-                self.Zone_fit[0] = S.indexX
-
-            # Reconstruction du modèle global si besoin
-            if S.model is None and getattr(S, "Gauges", None):
-                S.model = None
-                for j, g in enumerate(S.Gauges):
-                    g.Update_model()
-                    if j == 0:
-                        S.model = g.model
-                    else:
-                        S.model += g.model
-
-            # (re)construction des listes de pics
-            self.Nom_pic = [[] for _ in range(nb_j)]
-            self.list_text_pic = [[] for _ in range(nb_j)]
-            self.Param0 = [[] for _ in range(nb_j)]
-            self.J = [0 for _ in range(nb_j)]
-            self.list_y_fit_start = [[] for _ in range(nb_j)]
-            self.list_name_gauges = []
-
-            if getattr(S, "Gauges", None):
-                for i, Jg in enumerate(S.Gauges):
-                    self.list_name_gauges.append(Jg.name)
-                    for j, p in enumerate(Jg.pics):
-                        self.Nom_pic[i].append(p.name)
-                        new_P0, param = p.Out_model()
-                        # new_P0 = [X0, Y0, sigma, coef]
-                        self.Param0[i].append(new_P0 + [p.model_fit])
-                        new_name = (
-                            p.name
-                            + "   X0:" + str(self.Param0[i][-1][0])
-                            + "   Y0:" + str(self.Param0[i][-1][1])
-                            + "   sigma:" + str(self.Param0[i][-1][2])
-                            + "   Coef:" + str(self.Param0[i][-1][3])
-                            + " ; Modele:" + str(self.Param0[i][-1][4])
-                        )
-                        self.J[i] += 1
-                        self.list_text_pic[i].append(new_name)
-                        y_plot = p.model.eval(param, x=S.wnb)
-                        self.list_y_fit_start[i].append(y_plot)
-
-            # Mise à jour des infos de filtre et baseline
-            if hasattr(self, "filtre_type_selector") and getattr(S, "type_filtre", None) is not None:
-                index = self.filtre_type_selector.findText(S.type_filtre)
-                if index != -1:
-                    self.filtre_type_selector.setCurrentIndex(index)
-
-            if getattr(S, "param_f", None) is not None and len(S.param_f) >= 2:
-                self.param_filtre_1_entry.setText(str(S.param_f[0]))
-                self.param_filtre_2_entry.setText(str(S.param_f[1]))
-
-            if hasattr(S, "deg_baseline"):
-                self.deg_baseline_entry.setValue(S.deg_baseline)
-
-            self._spectrum_limits_initialized = False
-            self._zoom_limits_initialized = False
-
-            # -> Data_treatement + y_fit_start + refresh graph
-            self.Baseline_spectrum()
-
-            # Mise à jour UI jauge/pics
-            self.listbox_pic.clear()
-            if getattr(S, "Gauges", None):
-                self.index_jauge = 0
-                if self.list_name_gauges:
-                    try:
-                        idx_gauge = self.liste_type_Gauge.index(self.list_name_gauges[self.index_jauge])
-                        self.Gauge_type_selector.setCurrentIndex(idx_gauge)
-                    except ValueError:
-                        # nom inconnu → on n'impose pas l'index du combo
-                        pass
-                self.LOAD_Gauge()
-            else:
-                self.index_jauge = -1
+    
     
     def f_index_gauge(self,spec):
         l_name = [ga.name for ga in spec.Gauges]
@@ -2430,11 +2088,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.current_run_id = None
             self.RUN = None
 
-        # Restitue la couleur disponible
-        self.c_m.insert(0, state.color)
-        if state.color in self.color:
-            self.color.remove(state.color)
-
         # Nettoie les mappings fichier -> run_id
         keys_to_delete = [k for k, v in self.file_index_map.items() if v == run_id]
         for k in keys_to_delete:
@@ -2492,7 +2145,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 print("del(Param_FIT[J])",e)
             del(self.X_s[self.index_jauge])
             del(self.X_e[self.index_jauge])
-            del(self.z1)[self.index_jauge]
+            del(self.z1[self.index_jauge])
             del(self.z2[self.index_jauge])
             del(self.Zone_fit[self.index_jauge])
             #del(self.bit_plot_fit[self.index_jauge])
@@ -2579,7 +2232,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def DEBUG_SPECTRUM(self):
         self.CLEAR_ALL()
         self.bit_bypass=True
-        self.LOAD_Spectrum
+        self.LOAD_Spectrum()
         self.bit_bypass=False
 #########################################################################################################################################################################################
 #? COMMANDE SAVE
@@ -3371,18 +3024,25 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         dlg.setValue(0)
         dlg.show()
         QApplication.processEvents()
-
+    
         canceled = False
 
         # ----- BOUCLE SUR LES SPECTRES -----
         try:
             for k, i in enumerate(range(index_start, index_stop + 1), start=1):
+
+                
                 # Vérifier si l'utilisateur a cliqué sur Stop
                 if dlg.wasCanceled():
                     canceled = True
                     print("Multi-fit: canceled by user.")
                     break
 
+                t = self.RUN.Time_spectrum[i]
+                # Lignes verticales
+                self.line_t_P.setPos(t)
+                self.line_t_dPdt.setPos(t)
+                self.line_t_sigma.setPos(t)
                 #print(f"Multi-fit : spectre {i}/{index_stop}")
 
                 # Mise à jour du texte et de la barre de progression

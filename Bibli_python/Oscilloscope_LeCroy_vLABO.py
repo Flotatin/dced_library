@@ -6,7 +6,7 @@ import pyqtgraph as pg
 import os
 import re
 from tkinter import filedialog
-from datetime import datetime
+import datetime
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QKeyEvent
@@ -503,7 +503,7 @@ class OscilloscopeViewer(QMainWindow):
                    "Channel4" :pd.Series(trace_group[4].y),
                   })
         #file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "Data Files (*.dat)")
-        file_path =os.path.join(self.folder,f"{self.name_save_entry.text()}_{datetime.date()}")
+        file_path =os.path.join(self.folder,str(self.name_save_entry.text())+datetime.datetime.now().strftime("_%d%m%y_%Hh%M"))
         if file_path:
             with open(file_path, 'w') as file2write:
                 file2write.write(df.to_string())

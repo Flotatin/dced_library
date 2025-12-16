@@ -251,16 +251,6 @@ class UiLayoutMixin:
         self.f_model_pic_type()   # va utiliser self.ParampicLayout, self.model_pic_type_selector, etc.
         self.bit_bypass = False
 
-        # Enfin : ajout de l’onglet dans le QTabWidget
-        self.tools_tabs.addTab(self.tab_gauge, "Gauge & Peak")
-
-    def _setup_tab_fit(self):
-        self.tab_fit = QWidget()
-        layout = QVBoxLayout(self.tab_fit)
-
-        name = QLabel("fit param")
-        layout.addWidget(name)
-
         self.spinbox_cycle = QSpinBox()
         self.spinbox_cycle.valueChanged.connect(self.setFocus)
         self.spinbox_cycle.setRange(0, 10)
@@ -317,6 +307,72 @@ class UiLayoutMixin:
         self.multi_fit_button.clicked.connect(self._CED_multi_fit)
         layout.addWidget(self.multi_fit_button)
 
+        # Enfin : ajout de l’onglet dans le QTabWidget
+        self.tools_tabs.addTab(self.tab_gauge, "Gauge & Peak")
+
+    def _setup_tab_fit(self):
+        self.tab_fit = QWidget()
+        layout = QVBoxLayout(self.tab_fit)
+
+        name = QLabel("fit param")
+        layout.addWidget(name)
+        """
+        self.spinbox_cycle = QSpinBox()
+        self.spinbox_cycle.valueChanged.connect(self.setFocus)
+        self.spinbox_cycle.setRange(0, 10)
+        self.spinbox_cycle.setSingleStep(1)
+        self.spinbox_cycle.setValue(1)
+        layout.addLayout(creat_spin_label(self.spinbox_cycle, "nb<sub>cycle</sub> (Y):"))
+
+        self.sigma_pic_fit_entry = QSpinBox()
+        self.sigma_pic_fit_entry.valueChanged.connect(self.setFocus)
+        self.sigma_pic_fit_entry.setRange(1, 20)
+        self.sigma_pic_fit_entry.setSingleStep(1)
+        self.sigma_pic_fit_entry.setValue(2)
+        self.sigma_pic_fit_entry.valueChanged.connect(
+            lambda _value: self._update_fit_window() if getattr(self, "index_pic_select", None) is not None else None
+        )
+
+        layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nb σ (R)"))
+
+        self.inter_entry = QDoubleSpinBox()
+        self.inter_entry.valueChanged.connect(self.setFocus)
+        self.inter_entry.setRange(0.1, 5)
+        self.inter_entry.setSingleStep(0.1)
+        self.inter_entry.setValue(1)
+        layout.addLayout(creat_spin_label(self.inter_entry, "% variation fit"))
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        name = QLabel("Multi fit")
+        layout.addWidget(name)
+
+        self.add_btn = QPushButton("Ajouter une zone")
+        self.add_btn.clicked.connect(self.add_zone)
+        layout.addWidget(self.add_btn)
+
+        self.remove_btn = QPushButton("Supprimer la zone sélectionnée")
+        self.remove_btn.clicked.connect(self.dell_zone)
+        self.remove_btn.setEnabled(False)
+        layout.addWidget(self.remove_btn)
+
+        self.index_start_entry = QSpinBox()
+        self.index_start_entry.setRange(0, 2000)
+        self.index_start_entry.setValue(1)
+        layout.addLayout(creat_spin_label(self.index_start_entry, "Index start"))
+
+        self.index_stop_entry = QSpinBox()
+        self.index_stop_entry.setRange(0, 2000)
+        self.index_stop_entry.setValue(10)
+        layout.addLayout(creat_spin_label(self.index_stop_entry, "Index stop"))
+
+        self.multi_fit_button = QPushButton("Launch multi fit")
+        self.multi_fit_button.clicked.connect(self._CED_multi_fit)
+        layout.addWidget(self.multi_fit_button)
+        """
         self.tools_tabs.addTab(self.tab_fit, "Fit")
 
     def _setup_tab_help_and_commande(self):
