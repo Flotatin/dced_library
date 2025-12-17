@@ -2,6 +2,7 @@
 
 import copy
 import io
+import logging
 import os
 import sys
 import traceback
@@ -37,6 +38,8 @@ from theme_config import STYLE_TEMPLATE, THEMES, make_c_m
 from ui_layout import UiLayoutMixin
 from spectrum_view import SpectrumViewMixin
 from ddac_view import DdacViewMixin, RunViewState
+
+logger = logging.getLogger(__name__)
 
 pg.setConfigOptions(
     antialias=True,          # courbes lissées
@@ -142,10 +145,10 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         # États init pour éviter les accès à des attributs non initialisés
         self.bit_dP: int = 0
         """0: attente du clic Pstart / 1: attente du clic Pend."""
-        self.Pstart: float = 0.0
-        self.Pend: float = 0.0
-        self.tstart: float = 0.0
-        self.tend: float = 0.0
+        self.Pstart: Optional[float] = None
+        self.Pend: Optional[float] = None
+        self.tstart: Optional[float] = None
+        self.tend: Optional[float] = None
         self.x1: float = 0.0
         self.y1: float = 0.0
         self.x5: float = 0.0
@@ -203,6 +206,24 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             return pg.mkPen(**spec)
         return pg.mkPen(spec)
 
+    def _report_warning(self, message: str):
+        """Loggue un avertissement et l'affiche dans la zone de statut si possible."""
+
+        logger.warning(message)
+        if hasattr(self, "text_box_msg"):
+            self.text_box_msg.setText(message)
+
+    def _require_attributes(self, attrs, context: str) -> bool:
+        """Vérifie la présence des attributs indispensables et loggue si absent."""
+
+        missing = [attr for attr in attrs if not hasattr(self, attr)]
+        if missing:
+            self._report_warning(
+                f"{context} interrompu : attribut(s) manquant(s) {', '.join(missing)}."
+            )
+            return False
+        return True
+
     def _build_stylesheet(self, theme):
         try:
             return STYLE_TEMPLATE.safe_substitute(
@@ -219,7 +240,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 button_text=theme["button_text"],
             )
         except Exception as exc:
-            print("Failed to build stylesheet:", exc)
+            self._report_warning(f"Failed to build stylesheet: {exc}")
             return ""
 
     def _apply_plot_item_theme(self, plot_item, theme):
@@ -275,12 +296,42 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def _apply_theme_stylesheet(self, theme):
         """Applique la feuille de style Qt en fonction du thème calculé."""
 
-        self.setStyleSheet(self._build_stylesheet(theme))
+        stylesheet = self._build_stylesheet(theme)
+        if not stylesheet:
+            self._report_warning("Feuille de style vide : thème invalide ou incomplet.")
+            return
+
+        self.setStyleSheet(stylesheet)
 
     def _apply_theme_to_spectrum(self, theme):
         """Applique le thème à la zone Spectrum (courbes + grilles)."""
 
-        if not hasattr(self, "pg_spec"):
+        if not self._require_attributes(
+            (
+                "pg_spec",
+                "pg_zoom",
+                "pg_baseline",
+                "pg_fft",
+                "pg_dy",
+                "pg_spectrum",
+                "curve_spec_data",
+                "curve_spec_fit",
+                "curve_spec_pic_select",
+                "curve_dy",
+                "line_dy_zero",
+                "curve_baseline_brut",
+                "curve_baseline_blfit",
+                "curve_fft",
+                "curve_zoom_data",
+                "curve_zoom_data_brut",
+                "curve_zoom_pic",
+                "vline",
+                "hline",
+                "cross_zoom",
+                "pg_text_label",
+            ),
+            "Application du thème Spectrum",
+        ):
             return
 
         self.pg_spec.setBackground(theme["plot_background"])
@@ -314,7 +365,26 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def _apply_theme_to_ddac(self, theme):
         """Applique le thème à la zone dDAC et recalcule la palette couleur."""
 
-        if not hasattr(self, "pg_ddac"):
+        if not self._require_attributes(
+            (
+                "pg_ddac",
+                "pg_P",
+                "pg_dPdt",
+                "pg_sigma",
+                "pg_movie",
+                "pg_dlambda",
+                "line_t_P",
+                "line_t_dPdt",
+                "line_t_sigma",
+                "line_nspec",
+                "line_p0",
+                "scatter_P",
+                "scatter_dPdt",
+                "scatter_sigma",
+                "scatter_dlambda",
+            ),
+            "Application du thème dDAC",
+        ):
             return
 
         self.pg_ddac.setBackground(theme["plot_background"])

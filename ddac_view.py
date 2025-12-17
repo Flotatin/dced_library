@@ -987,6 +987,12 @@ class DdacViewMixin:
     def _update_ddac_markers(self, which: str, x: float, y: float):
         """Positionne lignes/scatters en fonction de la courbe cliquée."""
 
+        if which != "P" and getattr(self, "bit_dP", 0) == 1:
+            # Séquence interrompue : on réinitialise pour éviter des états incohérents
+            self._reset_dp_selection()
+            if hasattr(self, "_report_warning"):
+                self._report_warning("Sélection Pstart/Pend réinitialisée après un clic hors P.")
+
         self.x_clic, self.y_clic = x, y
         self.line_t_P.setPos(x)
         self.line_t_sigma.setPos(x)
@@ -1013,6 +1019,15 @@ class DdacViewMixin:
             self.line_nspec.setPos(x)
             if hasattr(self, "scatter_dlambda"):
                 self.scatter_dlambda.setData([x], [y])
+
+    def _reset_dp_selection(self):
+        """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
+
+        self.bit_dP = 0
+        self.Pstart = None
+        self.Pend = None
+        self.tstart = None
+        self.tend = None
 
     def _sync_movie_after_click(self, state: Optional[RunViewState]):
         """Synchronise slider/frames après un clic si une vidéo est disponible."""
