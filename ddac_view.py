@@ -488,11 +488,14 @@ class DdacViewMixin:
 
         state = self._get_state_for_run()
         if state is not None and self.RUN is not None:
+            # Copie profonde indispensable ici : on doit pouvoir revenir à l'état
+            # précédent d'un RUN lorsque l'utilisateur change d'onglet.
             state.ced = copy.deepcopy(self.RUN)
 
     def _finalize_run_selection(self, state: RunViewState, name_select: str):
         """Replace l'ancienne logique basée sur index_select par l'état RunViewState."""
         self.current_run_id = self._get_run_id(state.ced)
+        # On travaille sur une copie pour préserver l'instantané stocké dans le RunViewState
         self.RUN = copy.deepcopy(state.ced)
         self.index_select = self.liste_objets_widget.row(state.list_item) if state.list_item is not None else -1
 
@@ -550,6 +553,45 @@ class DdacViewMixin:
             curve = plot_widget.plot(**plot_kwargs)
             curve_list[index] = curve
         return curve
+
+    def _curve_is_empty(self, curve: Optional[pg.PlotDataItem]) -> bool:
+        if curve is None:
+            return True
+        x_old, y_old = curve.getData()
+        if x_old is None or y_old is None:
+            return True
+        return len(x_old) == 0 and len(y_old) == 0
+
+    def _update_curve_safe(self, curve: Optional[pg.PlotDataItem], x_data, y_data) -> bool:
+        """Met à jour une courbe uniquement si le contenu change.
+
+        Les données sont converties via ``np.asarray(..., copy=False)`` pour éviter
+        les copies inutiles. Si les deux axes sont vides et que la courbe l'est
+        déjà, aucun appel ``setData`` n'est déclenché.
+        """
+
+        if curve is None:
+            return False
+
+        x_array = np.asarray(x_data) if x_data is not None else np.array([])
+        y_array = np.asarray(y_data) if y_data is not None else np.array([])
+
+        if x_array.size == 0 and y_array.size == 0 and self._curve_is_empty(curve):
+            return False
+
+        x_old, y_old = curve.getData()
+        if (
+            x_old is not None
+            and y_old is not None
+            and len(x_old) == len(x_array)
+            and len(y_old) == len(y_array)
+            and np.array_equal(x_old, x_array)
+            and np.array_equal(y_old, y_array)
+        ):
+            return False
+
+        curve.setData(x_array, y_array)
+        return True
 
     def _get_or_create_curve(self, curve, plot_widget, **plot_kwargs):
         """Retourne la courbe existante ou en crée une nouvelle sur le plot fourni."""
@@ -638,7 +680,8 @@ class DdacViewMixin:
             self.text_box_msg.setText("Aucun état RunViewState pour rafraîchir ce CEDd")
             return
 
-        state.ced = copy.deepcopy(self.RUN)
+        # Pas de deepcopy ici : on consomme immédiatement les données pour le refresh
+        state.ced = self.RUN
         self._update_curves_for_run(state)
 
     def _update_curves_for_run(self, state: RunViewState):
@@ -689,13 +732,13 @@ class DdacViewMixin:
             )
 
             curve_P = self._ensure_curve_at(state.curves_P, i, self.pg_P, **curve_kwargs)
-            curve_P.setData(Time, l_P[i])
+            self._update_curve_safe(curve_P, Time, l_P[i])
 
             curve_dPdt = self._ensure_curve_at(state.curves_dPdt, i, self.pg_dPdt, **curve_kwargs)
-            curve_dPdt.setData(time_dps, dps)
+            self._update_curve_safe(curve_dPdt, time_dps, dps)
 
             curve_sigma = self._ensure_curve_at(state.curves_sigma, i, self.pg_sigma, **curve_kwargs)
-            curve_sigma.setData(Time, l_fwhm[i])
+            self._update_curve_safe(curve_sigma, Time, l_fwhm[i])
 
         has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
         if has_T:
@@ -708,9 +751,9 @@ class DdacViewMixin:
                 symbolBrush='darkred',
                 symbolSize=6,
             )
-            curve_T.setData(Time, l_T[-1] if l_T else [])
+            self._update_curve_safe(curve_T, Time, l_T[-1] if l_T else [])
         elif state.curves_T:
-            state.curves_T[0].setData([], [])
+            self._update_curve_safe(state.curves_T[0], [], [])
 
         for i, spe in enumerate(l_spe):
             curve = self._ensure_curve_at(
@@ -721,21 +764,21 @@ class DdacViewMixin:
                 symbol='+',
                 symbolPen=pg.mkPen(state.color),
             )
-            curve.setData(Time, spe)
+            self._update_curve_safe(curve, Time, spe)
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
-            state.curves_dlambda[extra_index].setData([], [])
+            self._update_curve_safe(state.curves_dlambda[extra_index], [], [])
 
         if self.RUN.data_Oscillo is not None:
             state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(state.color))
-            state.piezo_curve.setData(time_amp, amp)
+            self._update_curve_safe(state.piezo_curve, time_amp, amp)
         elif state.piezo_curve is not None:
-            state.piezo_curve.setData([], [])
+            self._update_curve_safe(state.piezo_curve, [], [])
 
         if state.corr_curve is not None:
             if self.var_bouton[3].isChecked() and state.correlations:
-                state.corr_curve.setData(state.t_cam, state.correlations)
+                self._update_curve_safe(state.corr_curve, state.t_cam, state.correlations)
             else:
-                state.corr_curve.setData([], [])
+                self._update_curve_safe(state.corr_curve, [], [])
 
         self._refresh_ddac_limits(state)
 
@@ -1001,7 +1044,7 @@ class DdacViewMixin:
         if which == "P":
             self.x1, self.y1 = x, y
             if hasattr(self, "scatter_P"):
-                self.scatter_P.setData([x], [y])
+                self._update_curve_safe(self.scatter_P, [x], [y])
             if self.bit_dP == 0:
                 self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
             elif self.bit_dP == 1:
@@ -1009,16 +1052,16 @@ class DdacViewMixin:
         elif which == "dPdt":
             self.x3, self.y3 = x, y
             if hasattr(self, "scatter_dPdt"):
-                self.scatter_dPdt.setData([x], [y])
+                self._update_curve_safe(self.scatter_dPdt, [x], [y])
         elif which == "sigma":
             self.x5, self.y5 = x, y
             if hasattr(self, "scatter_sigma"):
-                self.scatter_sigma.setData([x], [y])
+                self._update_curve_safe(self.scatter_sigma, [x], [y])
         elif which == "dlambda":
             self.x6, self.y6 = x, y
             self.line_nspec.setPos(x)
             if hasattr(self, "scatter_dlambda"):
-                self.scatter_dlambda.setData([x], [y])
+                self._update_curve_safe(self.scatter_dlambda, [x], [y])
 
     def _reset_dp_selection(self):
         """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
