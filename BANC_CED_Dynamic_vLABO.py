@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from pynverse import inversefunc
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QThreadPool, QTimer, Qt, pyqtSlot
 from PyQt5.QtGui import QColor, QFont, QPalette
 from PyQt5.QtWidgets import (
     QApplication,
@@ -38,6 +38,7 @@ from theme_config import STYLE_TEMPLATE, THEMES, make_c_m
 from ui_layout import UiLayoutMixin
 from spectrum_view import SpectrumViewMixin
 from ddac_view import DdacViewMixin, RunViewState
+from background_tasks import TaskRunnable
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,10 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         self.current_theme = "dark"
         self._theme_cache = {}
+        self.thread_pool = QThreadPool.globalInstance()
+        self._running_tasks = []
+        self._disabled_widgets = []
+        self._task_watchdogs = {}
 
         # --- Variables "métier" de base ---
         self.Spectrum = None
@@ -597,6 +602,82 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
             self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
             self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
+
+    # ==================================================================
+    # ===============   INFRASTRUCTURE THREADS   =======================
+    # ==================================================================
+    def _task_widgets_default(self):
+        return [
+            getattr(self, "previous_button", None),
+            getattr(self, "play_stop_button", None),
+            getattr(self, "next_button", None),
+            getattr(self, "slider", None),
+        ]
+
+    def _set_busy_state(self, busy: bool, message: str = "", widgets=None):
+        if widgets is None:
+            widgets = self._task_widgets_default()
+
+        if busy:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self.statusBar().showMessage(message, 5000)
+            self._disabled_widgets = []
+            for w in widgets:
+                if w is not None and w.isEnabled():
+                    w.setEnabled(False)
+                    self._disabled_widgets.append(w)
+        else:
+            QApplication.restoreOverrideCursor()
+            for w in self._disabled_widgets:
+                try:
+                    w.setEnabled(True)
+                except Exception:
+                    pass
+            self._disabled_widgets = []
+
+    def _submit_background_task(
+        self,
+        func,
+        result_slot=None,
+        description: str = "",
+        widgets=None,
+        timeout_ms: int = 20000,
+    ):
+        worker = TaskRunnable(func)
+
+        if result_slot is not None:
+            worker.signals.result.connect(result_slot)
+        worker.signals.error.connect(self._on_task_error)
+
+        def _cleanup():
+            self._set_busy_state(False, widgets=widgets)
+            timer = self._task_watchdogs.pop(worker, None)
+            if timer:
+                timer.stop()
+                timer.deleteLater()
+            try:
+                self._running_tasks.remove(worker)
+            except ValueError:
+                pass
+
+        worker.signals.finished.connect(_cleanup)
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(
+            lambda: logger.warning("Long running task (> %sms): %s", timeout_ms, description)
+        )
+        timer.start(timeout_ms)
+        self._task_watchdogs[worker] = timer
+
+        self._set_busy_state(True, message=description, widgets=widgets)
+        self.thread_pool.start(worker)
+        self._running_tasks.append(worker)
+
+    @pyqtSlot(str)
+    def _on_task_error(self, traceback_msg: str):
+        logger.error("Background task error:\n%s", traceback_msg)
+        self.text_box_msg.setText("Erreur dans une tâche en arrière-plan. Voir logs.")
 
     # ==================================================================
     # ===============   SETUP MODE POUR DEBUG  =========================
@@ -1601,17 +1682,44 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         sum_function = CL.Gen_sum_F(list_F)
 
-        try:
-            params, params_covar = curve_fit(
-                sum_function, x_fit, y_fit, p0=initial_guess, bounds=bounds
-            )
-        except Exception as e:
-            self.Spectrum.bit_fit = True
-            self.bit_fit_T = True
-            self.text_box_msg.setText("FIT ERROR" + str(e))
+        self._submit_background_task(
+            lambda: {
+                "params": curve_fit(
+                    sum_function, x_fit, y_fit, p0=initial_guess, bounds=bounds
+                )[0],
+                "x_fit": x_fit,
+                "y_fit": y_fit,
+                "fit": None,
+                "gauge_index": j,
+                "save_jauge": save_jauge,
+                "save_pic": save_pic,
+                "sum_function": sum_function,
+            },
+            result_slot=self._apply_single_fit_result,
+            description="Fit jauge en cours…",
+        )
+
+    @pyqtSlot(object)
+    def _apply_single_fit_result(self, payload):
+        if not payload or "params" not in payload:
+            self.text_box_msg.setText("FIT ERROR")
             return
 
-        fit = sum_function(x_fit, *params)
+        params = payload["params"]
+        x_fit = payload["x_fit"]
+        y_fit = payload["y_fit"]
+        fit = payload.get("fit")
+        j = payload.get("gauge_index", -1)
+        save_jauge = payload.get("save_jauge", self.index_jauge)
+        save_pic = payload.get("save_pic", self.index_pic_select)
+        sum_function = payload.get("sum_function")
+
+        if j < 0 or j >= len(self.Spectrum.Gauges):
+            self.text_box_msg.setText("FIT ERROR (index)")
+            return
+
+        if fit is None and sum_function is not None:
+            fit = sum_function(x_fit, *params)
 
         accepted, is_better = self._propose_and_confirm_fit(
             x_fit=x_fit,
@@ -1630,7 +1738,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         # 3) Mise à jour des données de la jauge j uniquement
         self.Spectrum.Gauges[j].Y = fit + self.Spectrum.blfit
-        self.Spectrum.Gauges[j].X = x_fit #self.Spectrum.x_corr
+        self.Spectrum.Gauges[j].X = x_fit
         self.Spectrum.Gauges[j].dY = y_fit - fit
         self.Spectrum.lamb_fit = params[0]
 
@@ -1681,7 +1789,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.index_jauge = save_jauge
         self.index_pic_select = save_pic
         self.LOAD_Gauge()
-        self.Print_fit_start()   # -> recalc y_fit_start + dY + refresh PyQtGraph
+        self.Print_fit_start()
 
     def FIT_lmfitVScurvfit(self):
         """Fit global sur toutes les jauges (sans tracés Matplotlib)."""
@@ -1760,18 +1868,43 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         # 4) curve_fit global
         sum_function = CL.Gen_sum_F(list_F)
 
-        try:
-            params, params_covar = curve_fit(
-                sum_function,
-                x_sub,
-                y_sub,
-                p0=initial_guess,
-                bounds=bounds,
-            )
-        except Exception as e:
-            self.Spectrum.bit_fit = True
-            self.bit_fit_T = True
-            self.text_box_msg.setText("FIT ERROR" + str(e))
+        self._submit_background_task(
+            lambda: {
+                "params": curve_fit(
+                    sum_function,
+                    x_sub,
+                    y_sub,
+                    p0=initial_guess,
+                    bounds=bounds,
+                )[0],
+                "x_sub": x_sub,
+                "y_sub": y_sub,
+                "blfit": blfit,
+                "gauge_indices": list(gauge_indices),
+                "save_jauge": save_jauge,
+                "save_pic": save_pic,
+                "sum_function": sum_function,
+            },
+            result_slot=self._apply_global_fit_result,
+            description="Fit global en cours…",
+        )
+
+    @pyqtSlot(object)
+    def _apply_global_fit_result(self, payload):
+        if not payload or "params" not in payload:
+            self.text_box_msg.setText("FIT ERROR")
+            return
+
+        params = payload["params"]
+        x_sub = payload.get("x_sub")
+        y_sub = payload.get("y_sub")
+        blfit = payload.get("blfit")
+        sum_function = payload.get("sum_function")
+        save_jauge = payload.get("save_jauge", self.index_jauge)
+        save_pic = payload.get("save_pic", self.index_pic_select)
+
+        if sum_function is None:
+            self.text_box_msg.setText("FIT ERROR")
             return
 
         fit = sum_function(x_sub, *params)

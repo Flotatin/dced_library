@@ -9,7 +9,7 @@ from typing import Optional
 import cv2
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt, pyqtSlot
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -782,6 +782,65 @@ class DdacViewMixin:
 
         self._refresh_ddac_limits(state)
 
+    def _compute_movie_metrics(self, cap, nb_frames, fps, t0_movie, time_axis, with_corr=False, nb_c=5):
+        t_cam = []
+        index_cam = []
+        correlations = []
+        gray_l = []
+
+        if cap is None or nb_frames is None or fps is None or fps == 0:
+            return {"t_cam": t_cam, "index_cam": index_cam, "correlations": correlations}
+
+        for i in range(nb_frames):
+            t_c = i / fps + t0_movie
+            if time_axis[0] < t_c < time_axis[-1]:
+                index_cam.append(i)
+                t_cam.append(t_c)
+                if with_corr:
+                    correlation = 0
+                    gray_curr = self.read_frame(cap, i, unit="gray")
+                    for gray in gray_l:
+                        correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
+                    correlations.append(correlation)
+                    if len(gray_l) > nb_c:
+                        del gray_l[0]
+                    gray_l.append(gray_curr)
+
+        return {"t_cam": t_cam, "index_cam": index_cam, "correlations": correlations}
+
+    @pyqtSlot(object)
+    def _on_movie_metrics_ready(self, payload):
+        if not payload:
+            return
+
+        run_id = payload.get("run_id")
+        state = self.runs.get(run_id)
+        if state is None:
+            return
+
+        state.t_cam = payload.get("t_cam", [])
+        state.index_cam = payload.get("index_cam", [])
+        state.correlations = payload.get("correlations", [])
+        c = payload.get("color", "w")
+
+        if self.var_bouton[3].isChecked() and state.correlations:
+            state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
+            state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
+        else:
+            state.corr_curve = self.pg_dPdt.plot([], [])
+
+        self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
+        if state.index_cam:
+            self.Num_im = state.index_cam[self.current_index]
+            t = state.t_cam[self.current_index]
+            Frame = self.read_frame(state.cap, self.Num_im)
+            if Frame is not None:
+                self.img_item.setImage(np.array(Frame), autoLevels=True)
+
+        self.slider.setMaximum(max(0, len(state.index_cam) - 1))
+        self.slider.setValue(self.current_index)
+        self._update_movie_frame()
+
     def PRINT_CEDd(self, item=None, objet_run=None):
         """
         - Si item est donné (clic dans self.liste_fichiers) et objet_run est None :
@@ -921,41 +980,26 @@ class DdacViewMixin:
             t0_movie = getattr(self.RUN, 't0_movie', 0)
             cap, fps, nb_frames = self.Read_Movie(self.RUN)
             state.cap = cap
-            gray_l = []
-            nb_c = 5
+            state.t_cam = []
+            state.index_cam = []
+            state.correlations = []
 
-            for i in range(nb_frames):
-                t_c = i / fps + t0_movie
-                if Time[0] < t_c < Time[-1]:
-                    state.t_cam.append(t_c)
-                    state.index_cam.append(i)
-                    if self.var_bouton[3].isChecked():
-                        correlation = 0
-                        gray_curr = self.read_frame(cap, i, unit="gray")
-                        for gray in gray_l:
-                            correlation += cv2.matchTemplate(gray, gray_curr, cv2.TM_CCOEFF_NORMED)[0][0] - 1
-                        state.correlations.append(correlation)
-                        if len(gray_l) > nb_c:
-                            del gray_l[0]
-                        gray_l.append(gray_curr)
-
-            if self.var_bouton[3].isChecked() and state.correlations:
-                state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
-                state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
-            else:
-                state.corr_curve = self.pg_dPdt.plot([], [])
-
-            self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
-            if state.index_cam:
-                self.Num_im = state.index_cam[self.current_index]
-                t = state.t_cam[self.current_index]
-                Frame = self.read_frame(cap, self.Num_im)
-                if Frame is not None:
-                    self.img_item.setImage(np.array(Frame), autoLevels=True)
-
-            self.slider.setMaximum(max(0, len(state.index_cam) - 1))
-            self.slider.setValue(self.current_index)
-            self._update_movie_frame()
+            self._submit_background_task(
+                lambda: {
+                    **self._compute_movie_metrics(
+                        cap=cap,
+                        nb_frames=nb_frames,
+                        fps=fps,
+                        t0_movie=t0_movie,
+                        time_axis=Time,
+                        with_corr=self.var_bouton[3].isChecked(),
+                    ),
+                    "run_id": run_id,
+                    "color": c,
+                },
+                result_slot=self._on_movie_metrics_ready,
+                description="Calcul corrélation/trajectoire…",
+            )
         else:
             self.Num_im = 0
             t = Time[0]
