@@ -379,6 +379,43 @@ class MainWindow(
             plot_item.showGrid(x=True, y=True, alpha=self._get_theme()["grid_alpha"])
         plot_item.setMouseEnabled(x=True, y=True)
 
+    def _create_marker_line(
+        self,
+        *,
+        angle: float,
+        pos=None,
+        movable: bool = False,
+        pen_key: str = "selection_line",
+        z_value: Optional[float] = None,
+    ):
+        pen_spec = self._get_theme()["pens"].get(pen_key, {"color": "#ffff00"})
+        line = pg.InfiniteLine(pos, angle=angle, movable=movable, pen=self._mk_pen(pen_spec))
+        if z_value is not None:
+            line.setZValue(z_value)
+        return line
+
+    def _create_scatter_marker(
+        self,
+        *,
+        symbol: str = '+',
+        size: int = 10,
+        pen_key: str = "scatter",
+        brush=None,
+        z_value: Optional[float] = None,
+    ):
+        pen_spec = self._get_theme()["pens"].get(pen_key, {"color": "#ffffff", "width": 2})
+        scatter = pg.ScatterPlotItem(
+            x=[],
+            y=[],
+            pen=self._mk_pen(pen_spec),
+            brush=self._mk_brush(brush) if brush is not None else None,
+            size=size,
+            symbol=symbol,
+        )
+        if z_value is not None:
+            scatter.setZValue(z_value)
+        return scatter
+
     def _get_run_id(self, ced):
         """Retourne une clé stable pour un CEDd donné."""
 

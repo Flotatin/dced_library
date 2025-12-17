@@ -50,6 +50,11 @@ class RunViewState:
 
 
 class DdacViewMixin:
+    def _add_ddac_plot(self, *, row: int, col: int, x_label: Optional[str] = None, y_label: Optional[str] = None, show_grid: bool = True, **kwargs):
+        plot_item = self.pg_ddac.addPlot(row=row, col=col, **kwargs)
+        self._stylize_plot(plot_item, x_label=x_label, y_label=y_label, show_grid=show_grid)
+        return plot_item
+
     def _setup_ddac_box(self):
         group_graphique = QGroupBox("dDAC")
         layout_graphique = QVBoxLayout()
@@ -89,20 +94,14 @@ class DdacViewMixin:
         self.pg_ddac = pg.GraphicsLayoutWidget()
 
         # Col 0 : P, dP/dt/T, sigma
-        self.pg_P = self.pg_ddac.addPlot(row=0, col=0)
-        self.pg_P.setLabel('bottom', 'Time (s)')
-        self.pg_P.setLabel('left', 'P (GPa)')
+        self.pg_P = self._add_ddac_plot(row=0, col=0, x_label='Time (s)', y_label='P (GPa)')
 
-        self.pg_dPdt = self.pg_ddac.addPlot(row=1, col=0)
-        self.pg_dPdt.setLabel('bottom', 'Time (s)')
-        self.pg_dPdt.setLabel('left', 'dP/dt (GPa/ms), T (K)')
+        self.pg_dPdt = self._add_ddac_plot(row=1, col=0, x_label='Time (s)', y_label='dP/dt (GPa/ms), T (K)')
 
-        self.pg_sigma = self.pg_ddac.addPlot(row=2, col=0)
-        self.pg_sigma.setLabel('bottom', 'Time (s)')
-        self.pg_sigma.setLabel('left', 'sigma (nm)')
+        self.pg_sigma = self._add_ddac_plot(row=2, col=0, x_label='Time (s)', y_label='sigma (nm)')
 
         # Col 1 : IMAGE + Δλ
-        self.pg_movie = self.pg_ddac.addPlot(row=0, col=1)
+        self.pg_movie = self._add_ddac_plot(row=0, col=1, show_grid=False)
         self.pg_movie.setAspectLocked(True)
         self.pg_movie.hideAxis('bottom')
         self.pg_movie.hideAxis('left')
@@ -125,9 +124,7 @@ class DdacViewMixin:
         self.pg_text.setRange(xRange=(-1, 1), yRange=(-1, 1))
 
 
-        self.pg_dlambda = self.pg_ddac.addPlot(row=2, col=1)
-        self.pg_dlambda.setLabel('bottom', 'Spectrum index')
-        self.pg_dlambda.setLabel('left', 'Δλ12 (nm)')
+        self.pg_dlambda = self._add_ddac_plot(row=2, col=1, x_label='Spectrum index', y_label='Δλ12 (nm)')
 
         # ================== COURBES PERSISTANTES ==================
         self.curves_P = []        # une courbe par jauge
@@ -140,16 +137,16 @@ class DdacViewMixin:
 
         # Lignes de repère : temps sélectionné synchronisé sur tous les graphes
         # et base horizontale de pression.
-        self.line_t_P = pg.InfiniteLine(angle=90, movable=False)
-        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False)
-        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False)
-        self.line_p0 = pg.InfiniteLine(0,angle=0, movable=False)
+        self.line_t_P = self._create_marker_line(angle=90)
+        self.line_t_dPdt = self._create_marker_line(angle=90)
+        self.line_t_sigma = self._create_marker_line(angle=90)
+        self.line_p0 = self._create_marker_line(angle=0, pos=0)
         self.pg_P.addItem(self.line_p0)
         self.pg_P.addItem(self.line_t_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
 
-        self.line_nspec = pg.InfiniteLine(angle=90, movable=False)
+        self.line_nspec = self._create_marker_line(angle=90)
         self.pg_dlambda.addItem(self.line_nspec)
 
 
@@ -159,40 +156,16 @@ class DdacViewMixin:
         # ================== MARQUEURS DE CLIC (SCATTER CROIX) ==================
         # Un scatter par graphe pour montrer la position exacte du clic
 
-        self.scatter_P = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,          # pas de remplissage
-            size=10,
-            symbol='+'           # croix
-        )
+        self.scatter_P = self._create_scatter_marker(symbol='+')
         self.pg_P.addItem(self.scatter_P)
 
-        self.scatter_dPdt = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
+        self.scatter_dPdt = self._create_scatter_marker(symbol='+')
         self.pg_dPdt.addItem(self.scatter_dPdt)
 
-        self.scatter_sigma = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
+        self.scatter_sigma = self._create_scatter_marker(symbol='+')
         self.pg_sigma.addItem(self.scatter_sigma)
 
-        self.scatter_dlambda = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
+        self.scatter_dlambda = self._create_scatter_marker(symbol='+')
         self.pg_dlambda.addItem(self.scatter_dlambda)
 
       
