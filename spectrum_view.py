@@ -113,9 +113,12 @@ class SpectrumViewMixin:
         self.select_clic_box = None
 
         # index pour les jauges / pics
-        self.index_jauge = -1
-        self.index_pic_select = -1
-        self.index_spec = 0
+        self.index_jauge: int = -1
+        """Index de la jauge sélectionnée dans le RUN courant (-1 si aucune)."""
+        self.index_pic_select: int = -1
+        """Index du pic sélectionné dans le spectre visible (-1 si aucun)."""
+        self.index_spec: int = 0
+        """Numéro de spectre actuellement chargé dans l'onglet Spectrum."""
 
         self.lines =[]
         self.X0 = 0
@@ -127,11 +130,16 @@ class SpectrumViewMixin:
         self.y_fit_start = None
         self.model_pic_fit = None
 
-        self.bit_fit_T = False
-        self.bit_print_fit_T = False
-        self.bit_modif_jauge = False
-        self.bit_load_jauge = False
-        self.bit_filtre = False
+        self.bit_fit_T: bool = False
+        """Indique si un fit de température est actif (zones verrouillées)."""
+        self.bit_print_fit_T: bool = False
+        """Autorise l'affichage immédiat des résultats de fit température."""
+        self.bit_modif_jauge: bool = False
+        """Bloque les mises à jour quand une jauge est en cours de modification."""
+        self.bit_load_jauge: bool = False
+        """Vrai pendant le chargement d'une jauge pour éviter les callbacks."""
+        self.bit_filtre: bool = False
+        """Indique qu'un filtre de spectre est actif pour le tracé courant."""
         # ================== INTÉGRATION UI ==================
         SpectraBoxFirstLayout.addWidget(self.pg_spec)
 

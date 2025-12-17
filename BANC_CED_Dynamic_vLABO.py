@@ -5,7 +5,6 @@ import io
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 import cv2
@@ -34,10 +33,10 @@ from PyQt5.QtWidgets import (
 )
 from scipy.optimize import curve_fit
 
-from theme_config import STYLE_TEMPLATE, THEMES
+from theme_config import STYLE_TEMPLATE, THEMES, make_c_m
 from ui_layout import UiLayoutMixin
 from spectrum_view import SpectrumViewMixin
-from ddac_view import DdacViewMixin
+from ddac_view import DdacViewMixin, RunViewState
 
 pg.setConfigOptions(
     antialias=True,          # courbes lissées
@@ -107,26 +106,6 @@ class ProgressDialog(QDialog):
         """
         return (not self.was_canceled, None, None)
 
-@dataclass
-class RunViewState:
-    """État graphique associé à un CEDd (remplace les listes parallèles)."""
-    ced: CL.CEDd
-    color: str
-    time: list = field(default_factory=list)
-    spectre_number: list = field(default_factory=list)
-    curves_P: list = field(default_factory=list)
-    curves_dPdt: list = field(default_factory=list)
-    curves_sigma: list = field(default_factory=list)
-    curves_T: list = field(default_factory=list)
-    curves_dlambda: list = field(default_factory=list)
-    piezo_curve: object = None
-    corr_curve: object = None
-    cap: object = None
-    t_cam: list = field(default_factory=list)
-    index_cam: list = field(default_factory=list)
-    correlations: list = field(default_factory=list)
-    list_item: Optional[QListWidgetItem] = None
-
 class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def __init__(self, folder_start=None):
         super().__init__()
@@ -148,7 +127,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         # Autres attributs divers
         self.viewer = None
-        self.bit_c_reduite = True
+        self.bit_c_reduite: bool = True
+        """Réduit l'affichage des colonnes Spectrum lorsque True."""
 
         # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
         self.runs = {}
@@ -160,17 +140,18 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
 
         # États init pour éviter les accès à des attributs non initialisés
-        self.bit_dP = 0
-        self.Pstart = 0.0
-        self.Pend = 0.0
-        self.tstart = 0.0
-        self.tend = 0.0
-        self.x1 = 0.0
-        self.y1 = 0.0
-        self.x5 = 0.0
-        self.y3 = 0.0
-        self.x_clic = 0.0
-        self.y_clic = 0.0
+        self.bit_dP: int = 0
+        """0: attente du clic Pstart / 1: attente du clic Pend."""
+        self.Pstart: float = 0.0
+        self.Pend: float = 0.0
+        self.tstart: float = 0.0
+        self.tend: float = 0.0
+        self.x1: float = 0.0
+        self.y1: float = 0.0
+        self.x5: float = 0.0
+        self.y3: float = 0.0
+        self.x_clic: float = 0.0
+        self.y_clic: float = 0.0
 
         # Chemin de base
         if folder_start is None:
@@ -278,90 +259,102 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
 
-    def _apply_theme(self, theme_name: str):
-        theme = self._get_theme(theme_name)
-        self.current_theme = theme_name if theme_name in THEMES else "dark"
+    def _apply_theme_toggle_state(self):
+        """Met à jour l'interrupteur light/dark sans déclencher de signaux."""
 
-        # --- Bouton toggle light/dark ---
-        if hasattr(self, "theme_toggle_button"):
-            self.theme_toggle_button.blockSignals(True)
-            self.theme_toggle_button.setChecked(self.current_theme == "light")
-            self.theme_toggle_button.setText(
-                "Light mode" if self.current_theme == "light" else "Dark mode"
-            )
-            self.theme_toggle_button.blockSignals(False)
+        if not hasattr(self, "theme_toggle_button"):
+            return
 
-        # --- Stylesheet Qt global ---
+        self.theme_toggle_button.blockSignals(True)
+        self.theme_toggle_button.setChecked(self.current_theme == "light")
+        self.theme_toggle_button.setText(
+            "Light mode" if self.current_theme == "light" else "Dark mode"
+        )
+        self.theme_toggle_button.blockSignals(False)
+
+    def _apply_theme_stylesheet(self, theme):
+        """Applique la feuille de style Qt en fonction du thème calculé."""
+
         self.setStyleSheet(self._build_stylesheet(theme))
 
-        # ================== SPECTRUM BOX ==================
-        if hasattr(self, "pg_spec"):
-            self.pg_spec.setBackground(theme["plot_background"])
+    def _apply_theme_to_spectrum(self, theme):
+        """Applique le thème à la zone Spectrum (courbes + grilles)."""
 
-            for plot in (
-                self.pg_zoom,
-                self.pg_baseline,
-                self.pg_fft,
-                self.pg_dy,
-                self.pg_spectrum,
-            ):
-                self._apply_plot_item_theme(plot, theme)
+        if not hasattr(self, "pg_spec"):
+            return
 
-            pens = theme["pens"]
-            self.curve_spec_data.setPen(self._mk_pen(pens["spectrum_data"]))
-            self.curve_spec_fit.setPen(self._mk_pen(pens["spectrum_fit"]))
-            self.curve_spec_pic_select.setBrush(pg.mkBrush(pens["spectrum_pic_brush"]))
-            self.curve_dy.setPen(self._mk_pen(pens["dy"]))
-            self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
-            self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
-            #self.curve_baseline_filtre.setPen(self._mk_pen(pens["baseline_filtre"]))
-            self.curve_baseline_blfit.setPen(self._mk_pen(pens["baseline_fit"]))
-            self.curve_fft.setPen(self._mk_pen(pens["fft"]))
-            self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
-            self.curve_zoom_data_brut.setPen(self._mk_pen(pens["zoom_data_brut"]))
-            self.curve_zoom_pic.setBrush(pg.mkBrush(pens["zoom_pic_brush"]))
-            self.vline.setPen(self._mk_pen(pens["selection_line"]))
-            self.hline.setPen(self._mk_pen(pens["selection_line"]))
-            # cross_zoom est un ScatterPlotItem : on joue sur le brush
-            self.cross_zoom.setBrush(pg.mkBrush(pens["cross_zoom"]))
-            self.pg_text_label.setColor(pens["text_item"])
+        self.pg_spec.setBackground(theme["plot_background"])
 
-        # ================== dDAC BOX ==================
-        if hasattr(self, "pg_ddac"):
-            self.pg_ddac.setBackground(theme["plot_background"])
+        for plot in (
+            self.pg_zoom,
+            self.pg_baseline,
+            self.pg_fft,
+            self.pg_dy,
+            self.pg_spectrum,
+        ):
+            self._apply_plot_item_theme(plot, theme)
 
-            for plot in (
-                self.pg_P,
-                self.pg_dPdt,
-                self.pg_sigma,
-                self.pg_movie,
-                self.pg_dlambda,
-            ):
-                self._apply_plot_item_theme(plot, theme)
+        pens = theme["pens"]
+        self.curve_spec_data.setPen(self._mk_pen(pens["spectrum_data"]))
+        self.curve_spec_fit.setPen(self._mk_pen(pens["spectrum_fit"]))
+        self.curve_spec_pic_select.setBrush(pg.mkBrush(pens["spectrum_pic_brush"]))
+        self.curve_dy.setPen(self._mk_pen(pens["dy"]))
+        self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
+        self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
+        self.curve_baseline_blfit.setPen(self._mk_pen(pens["baseline_fit"]))
+        self.curve_fft.setPen(self._mk_pen(pens["fft"]))
+        self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
+        self.curve_zoom_data_brut.setPen(self._mk_pen(pens["zoom_data_brut"]))
+        self.curve_zoom_pic.setBrush(pg.mkBrush(pens["zoom_pic_brush"]))
+        self.vline.setPen(self._mk_pen(pens["selection_line"]))
+        self.hline.setPen(self._mk_pen(pens["selection_line"]))
+        self.cross_zoom.setBrush(pg.mkBrush(pens["cross_zoom"]))
+        self.pg_text_label.setColor(pens["text_item"])
 
-            pens = theme["pens"]
-            line_pen = self._mk_pen(pens["line_t"])
-            self.line_t_P.setPen(line_pen)
-            self.line_t_dPdt.setPen(line_pen)
-            self.line_t_sigma.setPen(line_pen)
-            self.line_nspec.setPen(line_pen)
-            self.line_p0.setPen(self._mk_pen(pens["baseline_time"]))
+    def _apply_theme_to_ddac(self, theme):
+        """Applique le thème à la zone dDAC et recalcule la palette couleur."""
 
-            scatter_pen = self._mk_pen(pens["scatter"])
-            # scatter_* sont des ScatterPlotItem : on met le "pen" (contour)
-            self.scatter_P.setPen(scatter_pen)
-            self.scatter_dPdt.setPen(scatter_pen)
-            self.scatter_sigma.setPen(scatter_pen)
-            self.scatter_dlambda.setPen(scatter_pen)
+        if not hasattr(self, "pg_ddac"):
+            return
 
-        # ================== TEXT VIEWBOX (dDAC) ==================
-        if hasattr(self, "pg_text"):
-            # pg_text est un ViewBox, pas un PlotItem : on met juste le fond
-            self.pg_text.setBackgroundColor(theme["plot_background"])
+        self.pg_ddac.setBackground(theme["plot_background"])
 
+        for plot in (
+            self.pg_P,
+            self.pg_dPdt,
+            self.pg_sigma,
+            self.pg_movie,
+            self.pg_dlambda,
+        ):
+            self._apply_plot_item_theme(plot, theme)
+
+        pens = theme["pens"]
+        line_pen = self._mk_pen(pens["line_t"])
+        self.line_t_P.setPen(line_pen)
+        self.line_t_dPdt.setPen(line_pen)
+        self.line_t_sigma.setPen(line_pen)
+        self.line_nspec.setPen(line_pen)
+        self.line_p0.setPen(self._mk_pen(pens["baseline_time"]))
+
+        scatter_pen = self._mk_pen(pens["scatter"])
+        self.scatter_P.setPen(scatter_pen)
+        self.scatter_dPdt.setPen(scatter_pen)
+        self.scatter_sigma.setPen(scatter_pen)
+        self.scatter_dlambda.setPen(scatter_pen)
+
+        if hasattr(self, "c_m_base"):
+            self.c_m_base = make_c_m(self.current_theme)
         self._recolor_all_runs()
 
-        # ================== POLICES DES AXES ==================
+    def _apply_theme_to_text_view(self, theme):
+        """Met à jour le fond du ViewBox texte côté dDAC."""
+
+        if hasattr(self, "pg_text"):
+            self.pg_text.setBackgroundColor(theme["plot_background"])
+
+    def _apply_axis_fonts(self):
+        """Uniformise la police des axes PyQtGraph pour tous les plots."""
+
         font = QFont("Segoe UI", 11)
 
         def _set_axes_font(plot_item):
@@ -384,6 +377,17 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             getattr(self, "pg_dlambda", None),
         ):
             _set_axes_font(plot)
+
+    def _apply_theme(self, theme_name: str):
+        theme = self._get_theme(theme_name)
+        self.current_theme = theme_name if theme_name in THEMES else "dark"
+
+        self._apply_theme_toggle_state()
+        self._apply_theme_stylesheet(theme)
+        self._apply_theme_to_spectrum(theme)
+        self._apply_theme_to_ddac(theme)
+        self._apply_theme_to_text_view(theme)
+        self._apply_axis_fonts()
 
     def _toggle_theme(self, checked: bool):
         self._apply_theme("light" if checked else "dark")
@@ -512,134 +516,162 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             )
 
 #? CALVIER COMMANDE CONTROLE
-    def keyPressEvent(self, event):# - - - COMMANDE CLAVIER - - -# 
-        key = event.key() 
-        modifiers = event.modifiers()
-        f,param=None,None
-        Box,name_f=False,None
+    def _should_ignore_keypress(self, event) -> bool:
+        """Retourne True si l'événement clavier doit être ignoré (focus externe)."""
 
-        if self.viewer is not None:
-            if self.focusWidget() == self.viewer:
-                return print("focus in Lecroy")
-        if Setup_mode is True:
-            print(key)
-            if key == Qt.Key_C : #CONFIRME PIC
-                f=self.Click_Confirme
-            elif key == Qt.Key_Z and modifiers & Qt.ShiftModifier: #ZONE 
-                f=self.Click_Zone
-            elif key == Qt.Key_U and modifiers & Qt.ShiftModifier: #Delle last pic
-                f=self.Undo_pic
-            elif key == Qt.Key_Return and modifiers & Qt.ShiftModifier : 
-                f=self.Click_Clear
-            elif key == Qt.Key_W :
-                f=self.Undo_pic_select
+        if self.viewer is not None and self.focusWidget() == self.viewer:
+            print("focus in Lecroy")
+            return True
+        return False
 
-        if event.key() == Qt.Key_Return and event.modifiers() == Qt.ControlModifier: # EXECTUE CODE PYTHON
+    def _handle_python_shortcuts(self, key, modifiers) -> bool:
+        """Traite les raccourcis liés à l'exécution de code Python."""
+
+        if key == Qt.Key_Return and modifiers == Qt.ControlModifier:
             self.execute_code()
+            return True
+
+        if key == Qt.Key_L and modifiers & Qt.ShiftModifier:
+            self.viewer = Oscilo.OscilloscopeViewer(
+                folder=os.path.join(folder_start, "Aquisition_LECROY_Banc_CEDd")
+            )
+            self.viewer.show()
+            return True
+
+        return False
+
+    def _handle_setup_shortcuts(self, key, modifiers):
+        """Raccourcis actifs uniquement en mode Setup."""
+
+        if Setup_mode is not True:
+            return None
+
+        print(key)
+        if key == Qt.Key_C:
+            return self.Click_Confirme
+        if key == Qt.Key_Z and modifiers & Qt.ShiftModifier:
+            return self.Click_Zone
+        if key == Qt.Key_U and modifiers & Qt.ShiftModifier:
+            return self.Undo_pic
+        if key == Qt.Key_Return and modifiers & Qt.ShiftModifier:
+            return self.Click_Clear
+        if key == Qt.Key_W:
+            return self.Undo_pic_select
+
+        return None
+
+    def _handle_toggle_shortcuts(self, key) -> bool:
+        """Gère les touches qui inversent simplement un état de checkbox."""
+
+        if key == Qt.Key_Q:
+            self.select_clic_box.setChecked(not self.select_clic_box.isChecked())
+            return True
+        if key == Qt.Key_F:
+            self.fit_start_box.setChecked(not self.fit_start_box.isChecked())
+            return True
+        if key == Qt.Key_M:
+            self.movie_select_box.setChecked(not self.movie_select_box.isChecked())
+            return True
+        if key == Qt.Key_H:
+            self.spectrum_select_box.setChecked(not self.spectrum_select_box.isChecked())
+            return True
+
+        return False
+
+    def _run_calcul_study(self, mini: bool):
+        """Encapsule Calcul_study avec gestion d'erreur utilisateur."""
+
+        try:
+            self.Spectrum.Calcul_study(mini=mini)
+        except Exception:
+            self.Print_error(traceback.format_exc())
+
+    def _resolve_global_action(self, key, modifiers):
+        """Retourne (fonction, nom, box, set_bypass) pour les raccourcis globaux."""
+
+        if key == Qt.Key_B and modifiers & Qt.ShiftModifier:
+            return self.Baseline_spectrum, "Baseline_spectrum", False, False
+        if key == Qt.Key_E and modifiers & Qt.ShiftModifier:
+            return self.CREAT_new_CEDd, "CREAT new file CEDd", True, False
+        if key == Qt.Key_K and modifiers & Qt.ShiftModifier:
+            return self.CLEAR_CEDd, "CLEAR CEDd", True, True
+        if key == Qt.Key_T and modifiers & Qt.ShiftModifier:
+            return self.CREAT_new_Spectrum, "CREAT new Spectrum", True, False
+        if key == Qt.Key_A and modifiers & Qt.ShiftModifier:
+            return self.FIT_lmfitVScurvfit, "FIT lmfit VS curvfit", True, False
+        if key == Qt.Key_Y and modifiers & Qt.ShiftModifier:
+            return self.Auto_pic, None, False, False
+        if key == Qt.Key_P:
+            return self.toggle_colonne, None, False, False
+        if key == Qt.Key_Z:
+            return lambda: self.toggle_cam_region(), None, False, False
+        if key == Qt.Key_O and modifiers & Qt.ShiftModifier:
+            return self.Dell_Jauge, None, False, False
+        if key == Qt.Key_R:
+            if modifiers & Qt.ShiftModifier:
+                return self.Replace_pic_fit, None, False, False
+            return self.Replace_pic, None, False, False
+        if key == Qt.Key_N and modifiers & Qt.ShiftModifier:
+            return self.REFRESH, "Refresh data CEDd", True, False
+        if key == Qt.Key_X and modifiers & Qt.ShiftModifier:
+            return self.SAVE_CEDd, "Save CEDd", True, False
+        if key == Qt.Key_J and modifiers & Qt.ShiftModifier:
+            return self.ADD_gauge, None, False, False
+        if key == Qt.Key_0:
+            return self.f_lambda0, None, False, False
+
+        return None
+
+    def _dispatch_key_action(self, action):
+        """Exécute l'action choisie en respectant les boîtes de dialogue."""
+
+        if action is None:
             return
 
-        elif key == Qt.Key_L and modifiers & Qt.ShiftModifier: # FENETRE LECROY
-            self.viewer = Oscilo.OscilloscopeViewer(folder=os.path.join(folder_start,"Aquisition_LECROY_Banc_CEDd"))
-            self.viewer.show()
+        func, name_f, use_box, set_bypass = action
 
+        if set_bypass:
+            self.bit_bypass = True
 
-        elif key == Qt.Key_I:
-            #if hasattr(self, "ddac_fit_range"):
-            self.toggle_fit_region()
-
-        elif key == Qt.Key_B and modifiers & Qt.ShiftModifier: # BASE LINE
-            f=self.Baseline_spectrum
-            name_f="Baseline_spectrum"
-    
-        elif key == Qt.Key_E and modifiers & Qt.ShiftModifier:  #New CEDd 
-            f=self.CREAT_new_CEDd
-            name_f="CREAT new file CEDd"
-            Box=True
-
-        elif key == Qt.Key_K and modifiers & Qt.ShiftModifier:  #New CEDd 
-            self.bit_bypass=True
-            f=self.CLEAR_CEDd
-            Box=True
-            name_f="CLEAR CEDd"
-        
-        elif key == Qt.Key_T and modifiers & Qt.ShiftModifier: #New Spectrum
-            f=self.CREAT_new_Spectrum
-            name_f="CREAT new Spectrum"
-            Box=True
-
-        elif key == Qt.Key_A and modifiers & Qt.ShiftModifier: # RUN FIT TOTAL
-            f=self.FIT_lmfitVScurvfit
-            Box=True
-            name_f="FIT lmfit VS curvfit"
-            
-        elif key == Qt.Key_Y and modifiers & Qt.ShiftModifier : # AUTOPIX
-            f=self.Auto_pic
-            #name_f="Auto pic"
-        
-        elif key == Qt.Key_P: #RESIZE WINDOW
-            f=self.toggle_colonne
-
-        elif key == Qt.Key_Z :
-                f=self.toggle_cam_region()
-         
-        elif key == Qt.Key_O and modifiers & Qt.ShiftModifier : #DELL JAUGE
-            f=self.Dell_Jauge
-        
-        elif key == Qt.Key_R :
-            if modifiers & Qt.ShiftModifier:
-                f=self.Replace_pic_fit
-            else:
-                f=self.Replace_pic
-
-        elif key == Qt.Key_N and modifiers & Qt.ShiftModifier: 
-            f=self.REFRESH
-            Box=True
-            name_f="Refresh data CEDd"
-        
-        elif key == Qt.Key_S :
+        if use_box:
+            self.Box_loading(fonction=func, name_f=name_f)
+        else:
             try:
-                if modifiers & Qt.ShiftModifier:
-                    self.Spectrum.Calcul_study(mini=True)
-                else:
-                    self.Spectrum.Calcul_study(mini=False)
+                func()
+                if name_f is not None:
+                    self.text_box_msg.setText(name_f + "SUCCES")
             except Exception:
-                e = traceback.format_exc()
-                self.Print_error(e)
-        
-        elif key == Qt.Key_X and modifiers & Qt.ShiftModifier:
-            f=self.SAVE_CEDd
-            Box=True
-            name_f="Save CEDd"
-        elif key == Qt.Key_J and modifiers & Qt.ShiftModifier:
-            f=self.ADD_gauge
-        
-        elif key == Qt.Key_0 :
-            f=self.f_lambda0
+                self.Print_error(traceback.format_exc())
 
-        elif key == Qt.Key_Q :
-            self.select_clic_box.setChecked(not self.select_clic_box.isChecked())
+        if set_bypass:
+            self.bit_bypass = False
 
-        elif key == Qt.Key_F :
-            self.fit_start_box.setChecked(not self.fit_start_box.isChecked())
+    def keyPressEvent(self, event):
+        """Regroupe les raccourcis clavier par thématique pour lisibilité/test."""
 
-        elif key == Qt.Key_M :
-            self.movie_select_box.setChecked(not self.movie_select_box.isChecked())
+        key = event.key()
+        modifiers = event.modifiers()
 
-        elif key == Qt.Key_H :
-            self.spectrum_select_box.setChecked(not self.spectrum_select_box.isChecked())
+        if self._should_ignore_keypress(event):
+            return
 
-        if f is not None:
-            if Box==True:
-                self.Box_loading(fonction=f,name_f=name_f)
-            else:
-                try:
-                    f()
-                    if name_f is not None:
-                        self.text_box_msg.setText(name_f+"SUCCES idTouche:" + str(key))
-                except Exception:
-                    e = traceback.format_exc()
-                    self.Print_error(e)
-            self.bit_bypass=False
+        if self._handle_python_shortcuts(key, modifiers):
+            return
+
+        setup_action = self._handle_setup_shortcuts(key, modifiers)
+        if setup_action is not None:
+            setup_action()
+            return
+
+        if self._handle_toggle_shortcuts(key):
+            return
+
+        if key == Qt.Key_S:
+            self._run_calcul_study(mini=bool(modifiers & Qt.ShiftModifier))
+            return
+
+        action = self._resolve_global_action(key, modifiers)
+        self._dispatch_key_action(action)
 
     def Box_loading(self,fonction,name_f):
         # Création de la QMessageBox
@@ -744,112 +776,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
                 os.path.join(self.dossier_selectionne, f) for f in files
             ]
 
-#########################################################################################################################################################################################
-#? COMMANDE CEDD
-
-    def _on_ddac_click(self, mouse_event):
-        """Gère les clics sur les graphes temporels dDAC et synchronise l'état UI.
-
-        Le clic est transformé des coordonnées scène vers le ViewBox ciblé (P,
-        dP/dt, σ ou Δλ) pour extraire (t, valeur). Les lignes verticales, les
-        marqueurs scatter et les textes sont mis à jour, puis la sélection de
-        spectre/film est recalculée en fonction du temps cliqué.
-        """
-        self.setFocus()
-        pos = mouse_event.scenePos()
-        vb = None
-        which = None
-
-        # Sur quel plot on a cliqué ?
-        if self.pg_P.sceneBoundingRect().contains(pos):
-            vb = self.pg_P.getViewBox()
-            which = "P"
-        elif self.pg_dPdt.sceneBoundingRect().contains(pos):
-            vb = self.pg_dPdt.getViewBox()
-            which = "dPdt"
-        elif self.pg_sigma.sceneBoundingRect().contains(pos):
-            vb = self.pg_sigma.getViewBox()
-            which = "sigma"
-        elif self.pg_dlambda.sceneBoundingRect().contains(pos):
-            vb = self.pg_dlambda.getViewBox()
-            which = "dlambda"
-        else:
-            return
-
-        mouse_point = vb.mapSceneToView(pos)
-        x = mouse_point.x()
-        y = mouse_point.y()
-
-        # Mise à jour des x1/x3/x5/x6 + lignes + scatters
-        if which == "P":
-            self.x1, self.y1 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-
-            # scatter sur le graphe P
-            if hasattr(self, "scatter_P"):
-                self.scatter_P.setData([x], [y])
-
-            # gestion du dP (start/end)
-            if self.bit_dP == 0:
-                self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
-            elif self.bit_dP == 1:
-                self.Pend, self.tend, self.bit_dP = self.y1, self.x1, 0
-
-        elif which == "dPdt":
-            self.x3, self.y3 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-
-            # scatter sur le graphe dP/dt
-            if hasattr(self, "scatter_dPdt"):
-                self.scatter_dPdt.setData([x], [y])
-
-        elif which == "sigma":
-            self.x5, self.y5 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-
-            # scatter sur le graphe sigma
-            if hasattr(self, "scatter_sigma"):
-                self.scatter_sigma.setData([x], [y])
-
-        elif which == "dlambda":
-            self.x6, self.y6 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-            self.line_nspec.setPos(x)
-
-            # scatter sur le graphe Δλ
-            if hasattr(self, "scatter_dlambda"):
-                self.scatter_dlambda.setData([x], [y])
-
-        # Mise à jour frame film si la case est cochée
-        state = self._get_state_for_run()
-        if (
-            self.movie_select_box.isChecked()
-            and self.RUN is not None
-            and state is not None
-            and state.t_cam
-        ):
-            
-            t_array = np.array(state.t_cam)
-            self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
-            self.slider.blockSignals(True)
-            self.slider.setValue(self.current_index)
-            self.slider.blockSignals(False)
-            self._update_movie_frame()
-
-        self.f_CEDd_update_print()
-    
 #########################################################################################################################################################################################
 #? MOVIE 
 #########################################################################################################################################################################################
