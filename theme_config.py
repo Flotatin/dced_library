@@ -1,6 +1,49 @@
 from string import Template
 from PyQt5.QtCore import Qt
 
+TAB10 = [
+    (0, 0, 250),
+    (0, 250, 0),
+    (250, 0, 0),
+    (250, 250, 0),
+    (250, 0, 250),
+    (0, 250, 250),
+]
+
+
+def _rgb255_to_rgb01(rgb):
+    return tuple(c / 255 for c in rgb)
+
+
+def _rgb01_to_hex(rgb):
+    r, g, b = (max(0, min(255, round(c * 255))) for c in rgb)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _blend(rgb, target, alpha):
+    # alpha=0 -> rgb ; alpha=1 -> target
+    return tuple((1 - alpha) * c + alpha * t for c, t in zip(rgb, target))
+
+
+def make_c_m(theme_name: str):
+    """Palette de couleurs dDAC adaptée au thème courant."""
+
+    alpha_to_white = 0.18  # thème sombre → éclaircir
+    alpha_to_black = 0.22  # thème clair  → assombrir
+
+    c_m = []
+    for rgb255 in TAB10:
+        rgb01 = _rgb255_to_rgb01(rgb255)
+
+        if theme_name == "dark":
+            rgb01 = _blend(rgb01, (1, 1, 1), alpha_to_white)
+        else:  # light
+            rgb01 = _blend(rgb01, (0, 0, 0), alpha_to_black)
+
+        c_m.append(_rgb01_to_hex(rgb01))
+
+    return c_m
+
 STYLE_TEMPLATE = Template(
     """
        /* Appliquer la police scientifique */

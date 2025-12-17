@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import Optional
+from dataclasses import dataclass, field
 from functools import partial
+from typing import Optional
+
 import cv2
-import matplotlib.colors as mcolors
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import QTimer, Qt
@@ -23,46 +24,7 @@ from PyQt5.QtWidgets import (
 )
 
 from Bibli_python import CL_FD_Update as CL
-
-import numpy as np
-import pyqtgraph as pg
-from dataclasses import dataclass, field
-
-
-def _rgb255_to_rgb01(rgb):
-    return tuple(c / 255 for c in rgb)
-
-def _rgb01_to_hex(rgb):
-    r, g, b = (max(0, min(255, round(c * 255))) for c in rgb)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-def _blend(rgb, target, alpha):
-    # alpha=0 -> rgb ; alpha=1 -> target
-    return tuple((1 - alpha) * c + alpha * t for c, t in zip(rgb, target))
-
-TAB10 = [(  0, 0, 250),(  0, 250, 0),(  250, 0, 0) ,(250, 250, 0),(250,0,250),(0,250,250) ]
-
-
-
-def make_c_m(theme_name: str):
-    """
-    Retourne une liste de couleurs hex adaptées au thème.
-    """
-    alpha_to_white = 0.18  # thème sombre → éclaircir
-    alpha_to_black = 0.22  # thème clair  → assombrir
-
-    c_m = []
-    for rgb255 in TAB10:
-        rgb01 = _rgb255_to_rgb01(rgb255)
-
-        if theme_name == "dark":
-            rgb01 = _blend(rgb01, (1, 1, 1), alpha_to_white)
-        else:  # light
-            rgb01 = _blend(rgb01, (0, 0, 0), alpha_to_black)
-
-        c_m.append(_rgb01_to_hex(rgb01))
-
-    return c_m
+from theme_config import make_c_m
 
 
 
@@ -1008,6 +970,68 @@ class DdacViewMixin:
 
         self.f_text_CEDd_print(t)
 
+    def _get_ddac_target_from_pos(self, pos):
+        """Détermine le ViewBox et le type de courbe visé par un clic PyQtGraph."""
+
+        if self.pg_P.sceneBoundingRect().contains(pos):
+            return self.pg_P.getViewBox(), "P"
+        if self.pg_dPdt.sceneBoundingRect().contains(pos):
+            return self.pg_dPdt.getViewBox(), "dPdt"
+        if self.pg_sigma.sceneBoundingRect().contains(pos):
+            return self.pg_sigma.getViewBox(), "sigma"
+        if self.pg_dlambda.sceneBoundingRect().contains(pos):
+            return self.pg_dlambda.getViewBox(), "dlambda"
+
+        return None, None
+
+    def _update_ddac_markers(self, which: str, x: float, y: float):
+        """Positionne lignes/scatters en fonction de la courbe cliquée."""
+
+        self.x_clic, self.y_clic = x, y
+        self.line_t_P.setPos(x)
+        self.line_t_sigma.setPos(x)
+        self.line_t_dPdt.setPos(x)
+
+        if which == "P":
+            self.x1, self.y1 = x, y
+            if hasattr(self, "scatter_P"):
+                self.scatter_P.setData([x], [y])
+            if self.bit_dP == 0:
+                self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
+            elif self.bit_dP == 1:
+                self.Pend, self.tend, self.bit_dP = self.y1, self.x1, 0
+        elif which == "dPdt":
+            self.x3, self.y3 = x, y
+            if hasattr(self, "scatter_dPdt"):
+                self.scatter_dPdt.setData([x], [y])
+        elif which == "sigma":
+            self.x5, self.y5 = x, y
+            if hasattr(self, "scatter_sigma"):
+                self.scatter_sigma.setData([x], [y])
+        elif which == "dlambda":
+            self.x6, self.y6 = x, y
+            self.line_nspec.setPos(x)
+            if hasattr(self, "scatter_dlambda"):
+                self.scatter_dlambda.setData([x], [y])
+
+    def _sync_movie_after_click(self, state: Optional[RunViewState]):
+        """Synchronise slider/frames après un clic si une vidéo est disponible."""
+
+        if (
+            not self.movie_select_box.isChecked()
+            or self.RUN is None
+            or state is None
+            or not state.t_cam
+        ):
+            return
+
+        t_array = np.array(state.t_cam)
+        self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
+        self.slider.blockSignals(True)
+        self.slider.setValue(self.current_index)
+        self.slider.blockSignals(False)
+        self._update_movie_frame()
+
     def _on_ddac_click(self, mouse_event):
         """Gère les clics sur les graphes temporels dDAC et synchronise l'état UI.
 
@@ -1018,97 +1042,18 @@ class DdacViewMixin:
         """
         self.setFocus()
         pos = mouse_event.scenePos()
-        vb = None
-        which = None
-
-        # Sur quel plot on a cliqué ?
-        if self.pg_P.sceneBoundingRect().contains(pos):
-            vb = self.pg_P.getViewBox()
-            which = "P"
-        elif self.pg_dPdt.sceneBoundingRect().contains(pos):
-            vb = self.pg_dPdt.getViewBox()
-            which = "dPdt"
-        elif self.pg_sigma.sceneBoundingRect().contains(pos):
-            vb = self.pg_sigma.getViewBox()
-            which = "sigma"
-        elif self.pg_dlambda.sceneBoundingRect().contains(pos):
-            vb = self.pg_dlambda.getViewBox()
-            which = "dlambda"
-        else:
+        vb, which = self._get_ddac_target_from_pos(pos)
+        if vb is None or which is None:
             return
 
         mouse_point = vb.mapSceneToView(pos)
         x = mouse_point.x()
         y = mouse_point.y()
 
-        # Mise à jour des x1/x3/x5/x6 + lignes + scatters
-        if which == "P":
-            self.x1, self.y1 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
+        self._update_ddac_markers(which, x, y)
 
-            # scatter sur le graphe P
-            if hasattr(self, "scatter_P"):
-                self.scatter_P.setData([x], [y])
-
-            # gestion du dP (start/end)
-            if self.bit_dP == 0:
-                self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
-            elif self.bit_dP == 1:
-                self.Pend, self.tend, self.bit_dP = self.y1, self.x1, 0
-
-        elif which == "dPdt":
-            self.x3, self.y3 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-
-            # scatter sur le graphe dP/dt
-            if hasattr(self, "scatter_dPdt"):
-                self.scatter_dPdt.setData([x], [y])
-
-        elif which == "sigma":
-            self.x5, self.y5 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-
-            # scatter sur le graphe sigma
-            if hasattr(self, "scatter_sigma"):
-                self.scatter_sigma.setData([x], [y])
-
-        elif which == "dlambda":
-            self.x6, self.y6 = x, y
-            self.x_clic, self.y_clic = x, y
-            self.line_t_P.setPos(x)
-            self.line_t_sigma.setPos(x)
-            self.line_t_dPdt.setPos(x)
-            self.line_nspec.setPos(x)
-
-            # scatter sur le graphe Δλ
-            if hasattr(self, "scatter_dlambda"):
-                self.scatter_dlambda.setData([x], [y])
-
-        # Mise à jour frame film si la case est cochée
         state = self._get_state_for_run()
-        if (
-            self.movie_select_box.isChecked()
-            and self.RUN is not None
-            and state is not None
-            and state.t_cam
-        ):
-
-            t_array = np.array(state.t_cam)
-            self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
-            self.slider.blockSignals(True)
-            self.slider.setValue(self.current_index)
-            self.slider.blockSignals(False)
-            self._update_movie_frame()
-
+        self._sync_movie_after_click(state)
         self.f_CEDd_update_print()
 
     def _on_slider_movie_changed(self, idx: int):
