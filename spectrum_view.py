@@ -136,7 +136,7 @@ class SpectrumViewMixin:
         """Autorise l'affichage immédiat des résultats de fit température."""
         self.bit_modif_jauge: bool = False
         """Bloque les mises à jour quand une jauge est en cours de modification."""
-        self.bit_load_jauge: bool = False
+        self.is_loading_gauge: bool = False
         """Vrai pendant le chargement d'une jauge pour éviter les callbacks."""
         self.bit_filtre: bool = False
         """Indique qu'un filtre de spectre est actif pour le tracé courant."""
@@ -1472,7 +1472,7 @@ class SpectrumViewMixin:
 
     def LOAD_Gauge(self):
         """Charge la jauge `self.index_jauge` dans l'UI (sans Matplotlib)."""
-        self.bit_load_jauge = False
+        self.is_loading_gauge = False
         self.bit_modif_jauge = True
 
         self._clear_selected_peak_overlay()
