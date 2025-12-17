@@ -182,6 +182,44 @@ class SpectrumViewMixin:
             row_factors=self._spec_row_factors,
             col_factors=self._spec_col_factors,
         )
+
+    # -----------------------------
+    # Helpers de rafraîchissement
+    # -----------------------------
+    def _curve_is_empty(self, curve: pg.PlotDataItem) -> bool:
+        x_old, y_old = curve.getData()
+        if x_old is None or y_old is None:
+            return True
+        return len(x_old) == 0 and len(y_old) == 0
+
+    def _update_curve_safe(self, curve: pg.PlotDataItem, x_data, y_data) -> bool:
+        """Pousse les nouvelles données sur une courbe uniquement si elles changent.
+
+        Les tableaux sont convertis en vues NumPy (pas de copie) pour limiter le
+        coût mémoire. En cas d'entrée vide, rien n'est envoyé si la courbe est déjà
+        vide. La fonction retourne ``True`` si un ``setData`` a effectivement été
+        déclenché.
+        """
+
+        x_array = np.asarray(x_data) if x_data is not None else np.array([])
+        y_array = np.asarray(y_data) if y_data is not None else np.array([])
+
+        if x_array.size == 0 and y_array.size == 0 and self._curve_is_empty(curve):
+            return False
+
+        x_old, y_old = curve.getData()
+        if (
+            x_old is not None
+            and y_old is not None
+            and len(x_old) == len(x_array)
+            and len(y_old) == len(y_array)
+            and np.array_equal(x_old, x_array)
+            and np.array_equal(y_old, y_array)
+        ):
+            return False
+
+        curve.setData(x_array, y_array)
+        return True
     def _update_fit_window(self, indexX = None) -> None:
         """Update the excluded zoom regions according to the current fit window."""
 
@@ -307,7 +345,7 @@ class SpectrumViewMixin:
         self.X0, self.Y0 = x, y
         self.vline.setPos(x)
         self.hline.setPos(y)
-        self.cross_zoom.setData([x], [y])
+        self._update_curve_safe(self.cross_zoom, [x], [y])
 
         # Si tu veux garder la logique "clic = sélectionner/placer un pic"
         # → seulement quand on clique dans le spectre principal
@@ -380,16 +418,16 @@ class SpectrumViewMixin:
         S = self.Spectrum
         if S is None:
             # on vide tout
-            self.curve_spec_data.setData([], [])
-            self.curve_spec_fit.setData([], [])
-            self.curve_dy.setData([], [])
-            self.curve_baseline_brut.setData([], [])
-            self.curve_baseline_blfit.setData([], [])
-            self.curve_fft.setData([], [])
-            self.curve_zoom_data.setData([], [])
-            self.curve_zoom_data_brut.setData([], [])
-            self.curve_zoom_pic.setData([], [])
-            self.curve_spec_pic_select.setData([], [])
+            self._update_curve_safe(self.curve_spec_data, [], [])
+            self._update_curve_safe(self.curve_spec_fit, [], [])
+            self._update_curve_safe(self.curve_dy, [], [])
+            self._update_curve_safe(self.curve_baseline_brut, [], [])
+            self._update_curve_safe(self.curve_baseline_blfit, [], [])
+            self._update_curve_safe(self.curve_fft, [], [])
+            self._update_curve_safe(self.curve_zoom_data, [], [])
+            self._update_curve_safe(self.curve_zoom_data_brut, [], [])
+            self._update_curve_safe(self.curve_zoom_pic, [], [])
+            self._update_curve_safe(self.curve_spec_pic_select, [], [])
             return
 
         # --- On mémorise les X/Y du spectre principal pour les autres graphes ---
@@ -400,7 +438,7 @@ class SpectrumViewMixin:
         if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
             x = np.asarray(S.x_corr)
             y = np.asarray(S.y_corr)
-            self.curve_spec_data.setData(x, y)
+            self._update_curve_safe(self.curve_spec_data, x, y)
 
             x_spec = x
             y_spec = y
@@ -418,7 +456,7 @@ class SpectrumViewMixin:
                     print("XRange error:", e)
                 self._spectrum_limits_initialized = True
         else:
-            self.curve_spec_data.setData([], [])
+            self._update_curve_safe(self.curve_spec_data, [], [])
             # si pas de x_corr, on peut prendre wnb comme X de référence
             if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "spec") and S.spec is not None:
                 x_spec = np.asarray(S.wnb)
@@ -426,53 +464,54 @@ class SpectrumViewMixin:
 
         # 2) Fit total (self.y_fit_start)
         if self.y_fit_start is not None and hasattr(S, "wnb"):
-            self.curve_spec_fit.setData(S.wnb, self.y_fit_start)
+            self._update_curve_safe(self.curve_spec_fit, S.wnb, self.y_fit_start)
         else:
-            self.curve_spec_fit.setData([], [])
+            self._update_curve_safe(self.curve_spec_fit, [], [])
         
         # 2 bis) Mise à jour du fond avec *tous* les pics
         self._update_gauge_peaks_background()
 
         # 3) dY : X = ceux du spectre, Y = dY
         if hasattr(S, "dY") and S.dY is not None:
-            self.curve_dy.setData(S.wnb[S.indexX] if S.indexX is not None else S.wnb , np.array(S.dY))
+            x_dy = S.wnb[S.indexX] if S.indexX is not None else S.wnb
+            self._update_curve_safe(self.curve_dy, x_dy, S.dY)
         else:
-            self.curve_dy.setData([], [])
+            self._update_curve_safe(self.curve_dy, [], [])
 
         # 4) Baseline : brut + blfit
         if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
-            self.curve_baseline_brut.setData(S.wnb, S.spec)
+            self._update_curve_safe(self.curve_baseline_brut, S.wnb, S.spec)
 
             # limites du graphe brut : X et Y du brut
             vb_base = self.pg_baseline.getViewBox()
             self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
         else:
-            self.curve_baseline_brut.setData([], [])
+            self._update_curve_safe(self.curve_baseline_brut, [], [])
 
         if hasattr(S, "blfit") and S.blfit is not None:
             if getattr(S, "indexX", None) is not None:
-                self.curve_baseline_blfit.setData(S.wnb[S.indexX], S.blfit[S.indexX])
+                self._update_curve_safe(self.curve_baseline_blfit, S.wnb[S.indexX], S.blfit[S.indexX])
             else:
-                self.curve_baseline_blfit.setData(S.wnb, S.blfit)
+                self._update_curve_safe(self.curve_baseline_blfit, S.wnb, S.blfit)
         else:
-            self.curve_baseline_blfit.setData([], [])
+            self._update_curve_safe(self.curve_baseline_blfit, [], [])
 
         # 5) FFT : même X que le spectre, mais limites Y = amplitude FFT
         # (adapte les noms d'attributs FFT si besoin)
         if hasattr(S, "fft_amp") and S.fft_amp is not None:
             # Exemple : on trace FFT avec un axe fréquentiel S.fft_f
             if hasattr(S, "fft_f") and S.fft_f is not None:
-                self.curve_fft.setData(S.fft_f, S.fft_amp)
+                self._update_curve_safe(self.curve_fft, S.fft_f, S.fft_amp)
                 x_fft = np.asarray(S.fft_f)
             else:
                 # si tu n'as pas d'axe de fréquence propre, tu peux simplement utiliser le même X que le spectre
                 if x_spec is not None:
                     x_fft = x_spec
-                    self.curve_fft.setData(x_fft, S.fft_amp)
+                    self._update_curve_safe(self.curve_fft, x_fft, S.fft_amp)
                 else:
                     x_fft = None
         else:
-            self.curve_fft.setData([], [])
+            self._update_curve_safe(self.curve_fft, [], [])
             x_fft = None
 
         # Limites du graphe FFT :
@@ -971,19 +1010,19 @@ class SpectrumViewMixin:
             and len(self.list_y_fit_start[self.index_jauge]) > self.index_pic_select
         ):
             y_pic = self.list_y_fit_start[self.index_jauge][self.index_pic_select]
-            self.curve_zoom_pic.setData(S.wnb, y_pic)
-            self.curve_spec_pic_select.setData(S.wnb, y_pic)
-            self.curve_zoom_data.setData(S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
-            self.curve_zoom_data_brut.setData(S.wnb, S.spec- S.blfit)
+            self._update_curve_safe(self.curve_zoom_pic, S.wnb, y_pic)
+            self._update_curve_safe(self.curve_spec_pic_select, S.wnb, y_pic)
+            self._update_curve_safe(self.curve_zoom_data, S.wnb, S.spec - (self.y_fit_start - y_pic) - S.blfit)
+            self._update_curve_safe(self.curve_zoom_data_brut, S.wnb, S.spec- S.blfit)
         else:
-            self.curve_zoom_pic.setData([], [])
-            self.curve_spec_pic_select.setData([], [])
+            self._update_curve_safe(self.curve_zoom_pic, [], [])
+            self._update_curve_safe(self.curve_spec_pic_select, [], [])
             if hasattr(S, "wnb") and hasattr(S, "spec"):
-                self.curve_zoom_data.setData(S.wnb, S.spec)
-                self.curve_zoom_data_brut.setData(S.wnb, S.spec)
+                self._update_curve_safe(self.curve_zoom_data, S.wnb, S.spec)
+                self._update_curve_safe(self.curve_zoom_data_brut, S.wnb, S.spec)
             else:
-                self.curve_zoom_data.setData([], [])
-                self.curve_zoom_data_brut.setData([], [])
+                self._update_curve_safe(self.curve_zoom_data, [], [])
+                self._update_curve_safe(self.curve_zoom_data_brut, [], [])
 
         # ------------- Limites du ZOOM : basées sur le pic sélectionné -------------
         if hasattr(S, "wnb") and S.wnb is not None:
@@ -1051,8 +1090,8 @@ class SpectrumViewMixin:
         """Clear the overlay curves highlighting the selected peak."""
 
         try:
-            self.curve_spec_pic_select.setData([], [])
-            self.curve_zoom_pic.setData([], [])
+            self._update_curve_safe(self.curve_spec_pic_select, [], [])
+            self._update_curve_safe(self.curve_zoom_pic, [], [])
         except Exception:
             pass
     
@@ -1129,12 +1168,16 @@ class SpectrumViewMixin:
         self.Print_fit_start()
 
         x_data = getattr(self.Spectrum, "wnb", np.array([]))
-        self.curve_zoom_pic.setData(x_data, y_plot_full)
+        self._update_curve_safe(self.curve_zoom_pic, x_data, y_plot_full)
 
-        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        self._update_curve_safe(self.curve_spec_pic_select, x_data, y_plot_full)
         if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
-            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
-            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec- self.Spectrum.blfit)
+            self._update_curve_safe(
+                self.curve_zoom_data,
+                x_data,
+                self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit,
+            )
+            self._update_curve_safe(self.curve_zoom_data_brut, x_data, self.Spectrum.spec- self.Spectrum.blfit)
         self._update_fit_window()
         # Option : ne zoomer que sur la zone où le pic est significatif
         # par exemple là où y_pic > 10% du max
@@ -1221,12 +1264,16 @@ class SpectrumViewMixin:
         self.Print_fit_start()
 
         x_data = getattr(self.Spectrum, "wnb", np.array([]))
-        self.curve_zoom_pic.setData(x_data, y_plot_full)
+        self._update_curve_safe(self.curve_zoom_pic, x_data, y_plot_full)
 
-        self.curve_spec_pic_select.setData(x_data, y_plot_full)
+        self._update_curve_safe(self.curve_spec_pic_select, x_data, y_plot_full)
         if hasattr(self.Spectrum, "spec") and hasattr(self.Spectrum, "blfit"):
-            self.curve_zoom_data.setData(x_data, self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit)
-            self.curve_zoom_data_brut.setData(x_data, self.Spectrum.spec - self.Spectrum.blfit)
+            self._update_curve_safe(
+                self.curve_zoom_data,
+                x_data,
+                self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit,
+            )
+            self._update_curve_safe(self.curve_zoom_data_brut, x_data, self.Spectrum.spec - self.Spectrum.blfit)
         self._update_fit_window()
         # Option : ne zoomer que sur la zone où le pic est significatif
         # par exemple là où y_pic > 10% du max
