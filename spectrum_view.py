@@ -1,6 +1,6 @@
 import copy
 import random
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pyqtgraph as pg
@@ -20,6 +20,11 @@ class SciAxis(pg.AxisItem):
 
 
 class SpectrumViewMixin:
+    def _add_spec_plot(self, *, row: int, col: int, x_label: Optional[str] = None, y_label: Optional[str] = None, show_grid: bool = True, **kwargs):
+        plot_item = self.pg_spec.addPlot(row=row, col=col, **kwargs)
+        self._stylize_plot(plot_item, x_label=x_label, y_label=y_label, show_grid=show_grid)
+        return plot_item
+
     def _setup_spectrum_box(self):
         self._create_spectrum_plots()
         self._create_persistent_curves()
@@ -40,41 +45,37 @@ class SpectrumViewMixin:
 
         # ---- Layout 3x2 : (zoom / baseline / FFT) x (spectrum / dY) ----
         # Row 0, Col 0 : ZOOM
-        self.pg_zoom = self.pg_spec.addPlot(row=0, col=0)
+        self.pg_zoom = self._add_spec_plot(row=0, col=0, show_grid=False)
         self.pg_zoom.hideAxis('bottom')
         self.pg_zoom.hideAxis('left')
 
         # Row 1, Col 0 : BASELINE
         y_axis_base_sci = SciAxis(orientation='left')
-        self.pg_baseline = self.pg_spec.addPlot(
+        self.pg_baseline = self._add_spec_plot(
             row=1,
             col=0,
-            axisItems={'left': y_axis_base_sci}
+            axisItems={'left': y_axis_base_sci},
+            x_label='X',
+            y_label='Intensity',
         )
-        self.pg_baseline.setLabel('bottom', 'X')
-        self.pg_baseline.setLabel('left', 'Intensity')
 
 
         # Row 2, Col 0 : FFT
-        self.pg_fft = self.pg_spec.addPlot(row=2, col=0)
-        self.pg_fft.setLabel('bottom', 'f')
-        self.pg_fft.setLabel('left', '|F|')
+        self.pg_fft = self._add_spec_plot(row=2, col=0, x_label='f', y_label='|F|')
 
         # Row 2, Col 1 : dY
-        self.pg_dy = self.pg_spec.addPlot(row=2, col=1)
-        self.pg_dy.setLabel('bottom', 'X')
-        self.pg_dy.setLabel('left', 'dY')
+        self.pg_dy = self._add_spec_plot(row=2, col=1, x_label='X', y_label='dY')
 
         # Row 0–1, Col 1 : SPECTRUM
         y_axis_sci = SciAxis(orientation='left')
-        self.pg_spectrum = self.pg_spec.addPlot(
+        self.pg_spectrum = self._add_spec_plot(
             row=0,
             col=1,
             rowspan=2,
             axisItems={'left': y_axis_sci},
+            x_label='X (U.A)',
+            y_label='Y (U.A)',
         )
-        self.pg_spectrum.setLabel('bottom', 'X (U.A)')
-        self.pg_spectrum.setLabel('left', 'Y (U.A)')
 
     def _create_persistent_curves(self) -> None:
         # ================== COURBES PERSISTANTES ==================
@@ -103,13 +104,14 @@ class SpectrumViewMixin:
 
     def _create_selection_items(self) -> None:
         # Sélections verticales/horizontales
-        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1))
-        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('y', width=1))
+        self.vline = self._create_marker_line(angle=90)
+        self.hline = self._create_marker_line(angle=0)
         self.pg_spectrum.addItem(self.vline)
         self.pg_spectrum.addItem(self.hline)
 
         # Pour le zoom : on met une petite croix
-        self.cross_zoom = self.pg_zoom.plot([], [], pen=None, symbol='+', symbolSize=10, symbolBrush='y')
+        self.cross_zoom = self._create_scatter_marker(symbol='+')
+        self.pg_zoom.addItem(self.cross_zoom)
 
         # Zones d'exclusion (fit window)
         self.zoom_exclusion_left = pg.LinearRegionItem(values=(0, 0.5), movable=False, brush=pg.mkBrush(255, 0, 0, 40))
