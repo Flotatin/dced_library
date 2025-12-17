@@ -15,7 +15,7 @@ import pandas as pd
 import pyqtgraph as pg
 from pynverse import inversefunc
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor, QFont, QPalette
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -114,6 +114,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         super().__init__()
 
         self.current_theme = "dark"
+        self._theme_cache = {}
 
         # --- Variables "métier" de base ---
         self.Spectrum = None
@@ -198,13 +199,68 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     # ==================================================================
     # ===============   UTILITAIRES ÉTAT DE RUN   ======================
     # ==================================================================
-    def _get_theme(self, name: Optional[str] = None):
-        return THEMES.get(name or self.current_theme, THEMES["dark"])
+    def _get_theme_resources(self, name: Optional[str] = None):
+        theme_name = name or self.current_theme
+        base_theme = THEMES.get(theme_name, THEMES["dark"])
 
-    def _mk_pen(self, spec):
+        cache_entry = self._theme_cache.get(theme_name)
+        if cache_entry is None:
+            cache_entry = {
+                "theme": base_theme,
+                "palette": None,
+                "pen_cache": {},
+                "brush_cache": {},
+                "stylesheet": None,
+            }
+            self._theme_cache[theme_name] = cache_entry
+
+        if cache_entry["theme"] is not base_theme:
+            cache_entry.update(
+                {
+                    "theme": base_theme,
+                    "palette": None,
+                    "pen_cache": {},
+                    "brush_cache": {},
+                    "stylesheet": None,
+                }
+            )
+
+        if cache_entry.get("palette") is None:
+            palette = QPalette()
+            palette.setColor(QPalette.Window, QColor(base_theme["window"]))
+            palette.setColor(QPalette.WindowText, QColor(base_theme["text"]))
+            palette.setColor(QPalette.Base, QColor(base_theme["background"]))
+            palette.setColor(QPalette.Text, QColor(base_theme["text"]))
+            cache_entry["palette"] = palette
+
+        return cache_entry
+
+    def _get_theme(self, name: Optional[str] = None):
+        return self._get_theme_resources(name)["theme"]
+
+    def _cache_key(self, spec):
         if isinstance(spec, dict):
-            return pg.mkPen(**spec)
-        return pg.mkPen(spec)
+            try:
+                return ("dict", tuple(sorted(spec.items())))
+            except TypeError:
+                return ("dict_repr", repr(spec))
+        return ("val", spec)
+
+    def _mk_pen(self, spec, theme_name: Optional[str] = None):
+        cache_entry = self._get_theme_resources(theme_name)
+        key = self._cache_key(spec)
+        pens = cache_entry["pen_cache"]
+        if key not in pens:
+            pens[key] = pg.mkPen(**spec) if isinstance(spec, dict) else pg.mkPen(spec)
+        return pens[key]
+
+    def _mk_brush(self, spec, theme_name: Optional[str] = None):
+        cache_entry = self._get_theme_resources(theme_name)
+        key = self._cache_key(spec)
+        brushes = cache_entry["brush_cache"]
+        if key not in brushes:
+            brushes[key] = pg.mkBrush(spec)
+        return brushes[key]
 
     def _report_warning(self, message: str):
         """Loggue un avertissement et l'affiche dans la zone de statut si possible."""
@@ -296,12 +352,30 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     def _apply_theme_stylesheet(self, theme):
         """Applique la feuille de style Qt en fonction du thème calculé."""
 
-        stylesheet = self._build_stylesheet(theme)
+        cache_entry = self._get_theme_resources(self.current_theme)
+
+        if not cache_entry.get("stylesheet"):
+            cache_entry["stylesheet"] = self._build_stylesheet(theme)
+
+        stylesheet = cache_entry["stylesheet"]
         if not stylesheet:
             self._report_warning("Feuille de style vide : thème invalide ou incomplet.")
             return
 
+        self.setPalette(cache_entry["palette"])
         self.setStyleSheet(stylesheet)
+
+    def _refresh_visible_plots(self, plots, theme):
+        for plot in plots:
+            if plot is None:
+                continue
+            if hasattr(plot, "isVisible") and not plot.isVisible():
+                continue
+            self._apply_plot_item_theme(plot, theme)
+
+    def _refresh_visible_lists(self, lists_of_plots, theme):
+        for plot_list in lists_of_plots:
+            self._refresh_visible_plots(plot_list, theme)
 
     def _apply_theme_to_spectrum(self, theme):
         """Applique le thème à la zone Spectrum (courbes + grilles)."""
@@ -334,21 +408,24 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         ):
             return
 
-        self.pg_spec.setBackground(theme["plot_background"])
+        if self.pg_spec.isVisible():
+            self.pg_spec.setBackground(theme["plot_background"])
 
-        for plot in (
-            self.pg_zoom,
-            self.pg_baseline,
-            self.pg_fft,
-            self.pg_dy,
-            self.pg_spectrum,
-        ):
-            self._apply_plot_item_theme(plot, theme)
+        self._refresh_visible_plots(
+            (
+                self.pg_zoom,
+                self.pg_baseline,
+                self.pg_fft,
+                self.pg_dy,
+                self.pg_spectrum,
+            ),
+            theme,
+        )
 
         pens = theme["pens"]
         self.curve_spec_data.setPen(self._mk_pen(pens["spectrum_data"]))
         self.curve_spec_fit.setPen(self._mk_pen(pens["spectrum_fit"]))
-        self.curve_spec_pic_select.setBrush(pg.mkBrush(pens["spectrum_pic_brush"]))
+        self.curve_spec_pic_select.setBrush(self._mk_brush(pens["spectrum_pic_brush"]))
         self.curve_dy.setPen(self._mk_pen(pens["dy"]))
         self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
         self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
@@ -356,10 +433,10 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.curve_fft.setPen(self._mk_pen(pens["fft"]))
         self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
         self.curve_zoom_data_brut.setPen(self._mk_pen(pens["zoom_data_brut"]))
-        self.curve_zoom_pic.setBrush(pg.mkBrush(pens["zoom_pic_brush"]))
+        self.curve_zoom_pic.setBrush(self._mk_brush(pens["zoom_pic_brush"]))
         self.vline.setPen(self._mk_pen(pens["selection_line"]))
         self.hline.setPen(self._mk_pen(pens["selection_line"]))
-        self.cross_zoom.setBrush(pg.mkBrush(pens["cross_zoom"]))
+        self.cross_zoom.setBrush(self._mk_brush(pens["cross_zoom"]))
         self.pg_text_label.setColor(pens["text_item"])
 
     def _apply_theme_to_ddac(self, theme):
@@ -387,16 +464,19 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         ):
             return
 
-        self.pg_ddac.setBackground(theme["plot_background"])
+        if self.pg_ddac.isVisible():
+            self.pg_ddac.setBackground(theme["plot_background"])
 
-        for plot in (
-            self.pg_P,
-            self.pg_dPdt,
-            self.pg_sigma,
-            self.pg_movie,
-            self.pg_dlambda,
-        ):
-            self._apply_plot_item_theme(plot, theme)
+        self._refresh_visible_plots(
+            (
+                self.pg_P,
+                self.pg_dPdt,
+                self.pg_sigma,
+                self.pg_movie,
+                self.pg_dlambda,
+            ),
+            theme,
+        )
 
         pens = theme["pens"]
         line_pen = self._mk_pen(pens["line_t"])
@@ -449,8 +529,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             _set_axes_font(plot)
 
     def _apply_theme(self, theme_name: str):
-        theme = self._get_theme(theme_name)
         self.current_theme = theme_name if theme_name in THEMES else "dark"
+        theme = self._get_theme(self.current_theme)
 
         self._apply_theme_toggle_state()
         self._apply_theme_stylesheet(theme)
