@@ -126,7 +126,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.valeurs_boutons = [True,True, True,False,True,True,True]
         self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
         self.liste_chemins_fichiers = []
-        self.liste_objets = []
         self.dossier_selectionne=folder_CEDd #r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"
         self.Spectrum_save=None
         self.CEDd_save=None
@@ -136,7 +135,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         # Autres attributs divers
         self.viewer = None
-        self.bit_c_reduite: bool = True
+        self.is_reduced_column_mode: bool = True
         """Réduit l'affichage des colonnes Spectrum lorsque True."""
 
         # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
@@ -149,8 +148,8 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
 
         # États init pour éviter les accès à des attributs non initialisés
-        self.bit_dP: int = 0
-        """0: attente du clic Pstart / 1: attente du clic Pend."""
+        self.is_selecting_dp_range: bool = False
+        """True après un clic sur Pstart, en attente du clic Pend."""
         self.Pstart: Optional[float] = None
         self.Pend: Optional[float] = None
         self.tstart: Optional[float] = None
@@ -686,7 +685,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.CREAT_new_Spectrum()
         self.Gauge_type_selector.setCurrentIndex(0)
         self.f_gauge_select()
-        self.bit_load_jauge = True
+        self.is_loading_gauge = True
         self.spinbox_P.setValue(11)
         self.ADD_gauge()
         self.FIT_lmfitVScurvfit()
@@ -962,11 +961,11 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             sys.stdout = old_stdout
     
     def toggle_colonne(self):
-        if self.bit_c_reduite:
+        if self.is_reduced_column_mode:
             self.grid_layout.setColumnStretch(2, 5)
         else:
             self.grid_layout.setColumnStretch(2, 0)
-        self.bit_c_reduite = not self.bit_c_reduite  # Inverser l'état
+        self.is_reduced_column_mode = not self.is_reduced_column_mode  # Inverser l'état
 
     def try_command(self,item):
         print("à coder")
@@ -1175,7 +1174,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         if self.bit_modif_PTlambda:
             return
         try:
-            if self.bit_load_jauge:
+            if self.is_loading_gauge:
                 self.Gauge_select.lamb_fit = \
                     self.Gauge_select.inv_f_P(value) + self.deltalambdaT
                 self.Gauge_select = self.f_p_move(self.Gauge_select, value)
@@ -1229,7 +1228,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             return
 
         try:
-            if self.bit_load_jauge:
+            if self.is_loading_gauge:
                 self.Gauge_select.lamb_fit = value
                 self.Gauge_select = self.f_x_move(self.Gauge_select, value)
 
@@ -1286,7 +1285,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         if self.bit_modif_PTlambda:
             return
         try:
-            if self.bit_load_jauge:
+            if self.is_loading_gauge:
                 self.Gauge_select.lamb_fit = round(float(inversefunc(
                     lambda x_: CL.T_Ruby_by_P(x_, P=self.Gauge_select.P,
                                             lamb0R=self.Gauge_select.lamb0),
@@ -1382,7 +1381,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             if new_g not in [G.name for G in self.Spectrum.Gauges]:
                 go=True
         if go:
-            self.bit_load_jauge=True
+            self.is_loading_gauge = True
             self.bit_modif_jauge=False
             self.Gauge_select=CL.Gauge(name=new_g)
             self.Gauge_select.P=self.spinbox_P.value()
@@ -2190,7 +2189,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
     
     def LOAD_Gauge(self):
         """Charge la jauge `self.index_jauge` dans l'UI (sans Matplotlib)."""
-        self.bit_load_jauge = False
+        self.is_loading_gauge = False
         self.bit_modif_jauge = True
 
         self._clear_selected_peak_overlay()
@@ -2227,7 +2226,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.bit_modif_jauge =False
         if self.bit_modif_jauge is True :
             return print("if you want this gauges DELL AND RELOAD")
-        self.bit_load_jauge=False
+        self.is_loading_gauge = False
         new_Jauge=CL.Gauge(name=new_g)
         new_Jauge.P=self.spinbox_P.value()
         new_Jauge.lamb_fit=new_Jauge.inv_f_P(new_Jauge.P)
@@ -2431,7 +2430,7 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.bit_fit_T = False
         self.bit_fit = [False for _ in range(self.nb_jauges)]
         self.bit_modif_jauge = False
-        self.bit_load_jauge = False
+        self.is_loading_gauge = False
         self.bit_filtre = False
         self.bit_plot_fit = [False for _ in range(self.nb_jauges)]
 

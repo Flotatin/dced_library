@@ -138,7 +138,8 @@ class DdacViewMixin:
         self.curve_corr_list = []
         self.curves_dlambda = []
 
-        # Ligne verticale pour t sélectionné
+        # Lignes de repère : temps sélectionné synchronisé sur tous les graphes
+        # et base horizontale de pression.
         self.line_t_P = pg.InfiniteLine(angle=90, movable=False)
         self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False)
         self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False)
@@ -271,6 +272,8 @@ class DdacViewMixin:
         self.timerMovie = QTimer(self)
         self.timerMovie.timeout.connect(self.play_movie)
 
+        # Un clic sur n'importe quel graphe temporel aligne les repères, déclenche
+        # la sélection spectre/film et met à jour les marqueurs de mesure.
         self.pg_P.scene().sigMouseClicked.connect(self._on_ddac_click)
         self.pg_dPdt.scene().sigMouseClicked.connect(self._on_ddac_click)
         self.pg_sigma.scene().sigMouseClicked.connect(self._on_ddac_click)
@@ -1072,9 +1075,14 @@ class DdacViewMixin:
         return None, None
 
     def _update_ddac_markers(self, which: str, x: float, y: float):
-        """Positionne lignes/scatters en fonction de la courbe cliquée."""
+        """Positionne lignes/scatters en fonction de la courbe cliquée.
 
-        if which != "P" and getattr(self, "bit_dP", 0) == 1:
+        Le clic définit un temps unique (lignes verticales) partagé entre
+        P/dPdt/σ/Δλ, déclenche la mesure dP/dt (couple Pstart/Pend) et prépare
+        la sélection de spectre/vidéo associée au temps choisi.
+        """
+
+        if which != "P" and getattr(self, "is_selecting_dp_range", False):
             # Séquence interrompue : on réinitialise pour éviter des états incohérents
             self._reset_dp_selection()
             if hasattr(self, "_report_warning"):
@@ -1089,10 +1097,10 @@ class DdacViewMixin:
             self.x1, self.y1 = x, y
             if hasattr(self, "scatter_P"):
                 self._update_curve_safe(self.scatter_P, [x], [y])
-            if self.bit_dP == 0:
-                self.Pstart, self.tstart, self.bit_dP = self.y1, self.x1, 1
-            elif self.bit_dP == 1:
-                self.Pend, self.tend, self.bit_dP = self.y1, self.x1, 0
+            if not self.is_selecting_dp_range:
+                self.Pstart, self.tstart, self.is_selecting_dp_range = self.y1, self.x1, True
+            else:
+                self.Pend, self.tend, self.is_selecting_dp_range = self.y1, self.x1, False
         elif which == "dPdt":
             self.x3, self.y3 = x, y
             if hasattr(self, "scatter_dPdt"):
@@ -1110,7 +1118,7 @@ class DdacViewMixin:
     def _reset_dp_selection(self):
         """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
 
-        self.bit_dP = 0
+        self.is_selecting_dp_range = False
         self.Pstart = None
         self.Pend = None
         self.tstart = None
