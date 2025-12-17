@@ -1,5 +1,6 @@
 import copy
 import random
+from typing import Any, Callable
 
 import numpy as np
 import pyqtgraph as pg
@@ -240,6 +241,27 @@ class SpectrumViewMixin:
 
         curve.setData(x_array, y_array)
         return True
+
+    def _run_spectrum_task(
+        self,
+        task: Callable[[], Any],
+        description: str,
+        result_slot: Callable[[Any], None] | None = None,
+    ) -> None:
+        """Exécute une tâche de traitement spectrale dans le pool Qt si possible."""
+
+        if not hasattr(self, "_submit_background_task"):
+            result = task()
+            if result_slot is not None:
+                result_slot(result)
+            return
+
+        self._submit_background_task(
+            task,
+            result_slot=result_slot,
+            description=description,
+        )
+
     def _update_fit_window(self, indexX = None) -> None:
         """Update the excluded zoom regions according to the current fit window."""
 
@@ -678,12 +700,24 @@ class SpectrumViewMixin:
         if self.filtre_type_selector.currentText() == "svg":
             param[0], param[1] = int(param[0]), int(param[1])
 
-        self.Spectrum.Data_treatement(
-            deg_baseline=int(self.deg_baseline_entry.value()),
-            type_filtre=self.filtre_type_selector.currentText(),
-            param_f=param,
-            print_data=False  # plus besoin de passer ax=ax_baseline, ax2=ax_fft
+        def _process_baseline():
+            self.Spectrum.Data_treatement(
+                deg_baseline=int(self.deg_baseline_entry.value()),
+                type_filtre=self.filtre_type_selector.currentText(),
+                param_f=param,
+                print_data=False,  # plus besoin de passer ax=ax_baseline, ax2=ax_fft
+            )
+            return True
+
+        self._run_spectrum_task(
+            _process_baseline,
+            description="Calcul baseline/FFT…",
+            result_slot=lambda _=None: self._on_baseline_ready(),
         )
+
+    def _on_baseline_ready(self):
+        """Callback UI exécuté après le recalcul de baseline en tâche de fond."""
+
         self._recompute_y_fit_start()   # somme des pics
         self._refresh_spectrum_view()
 

@@ -826,11 +826,14 @@ class DdacViewMixin:
         state.correlations = payload.get("correlations", [])
         c = payload.get("color", "w")
 
+        corr_curve = self._get_or_create_curve(state.corr_curve, self.pg_dPdt, pen=pg.mkPen(c))
+        state.corr_curve = corr_curve
+
         if self.var_bouton[3].isChecked() and state.correlations:
             state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
-            state.corr_curve = self.pg_dPdt.plot(state.t_cam, state.correlations, pen=pg.mkPen(c))
+            self._update_curve_safe(corr_curve, state.t_cam, state.correlations)
         else:
-            state.corr_curve = self.pg_dPdt.plot([], [])
+            self._update_curve_safe(corr_curve, [], [])
 
         self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
         if state.index_cam:
