@@ -171,6 +171,38 @@ class MainWindow(
             folder_start = r"E:\Aquisition_Banc_CEDd"
         self.folder_start = folder_start
 
+        # Tables de stylers mises en cache pour éviter de recréer les mêmes
+        # structures à chaque changement de thème.
+        self._spectrum_pen_mapping = {
+            "curve_spec_data": "spectrum_data",
+            "curve_spec_fit": "spectrum_fit",
+            "curve_dy": "dy",
+            "line_dy_zero": "zero_line",
+            "curve_baseline_brut": "baseline_brut",
+            "curve_baseline_blfit": "baseline_fit",
+            "curve_fft": "fft",
+            "curve_zoom_data": "zoom_data",
+            "curve_zoom_data_brut": "zoom_data_brut",
+            "vline": "selection_line",
+            "hline": "selection_line",
+        }
+        self._spectrum_brush_mapping = {
+            "curve_spec_pic_select": "spectrum_pic_brush",
+            "curve_zoom_pic": "zoom_pic_brush",
+            "cross_zoom": "cross_zoom",
+        }
+        self._ddac_pen_mapping = {
+            "line_t_P": "line_t",
+            "line_t_dPdt": "line_t",
+            "line_t_sigma": "line_t",
+            "line_nspec": "line_t",
+            "line_p0": "baseline_time",
+            "scatter_P": "scatter",
+            "scatter_dPdt": "scatter",
+            "scatter_sigma": "scatter",
+            "scatter_dlambda": "scatter",
+        }
+
     def _build_ui(self) -> None:
         self._setup_main_window()
 
@@ -276,28 +308,12 @@ class MainWindow(
         """Applique les couleurs de thème aux courbes et marqueurs Spectrum."""
 
         self._apply_pen_mapping(
-            {
-                "curve_spec_data": "spectrum_data",
-                "curve_spec_fit": "spectrum_fit",
-                "curve_dy": "dy",
-                "line_dy_zero": "zero_line",
-                "curve_baseline_brut": "baseline_brut",
-                "curve_baseline_blfit": "baseline_fit",
-                "curve_fft": "fft",
-                "curve_zoom_data": "zoom_data",
-                "curve_zoom_data_brut": "zoom_data_brut",
-                "vline": "selection_line",
-                "hline": "selection_line",
-            },
+            self._spectrum_pen_mapping,
             pens,
         )
 
         self._apply_brush_mapping(
-            {
-                "curve_spec_pic_select": "spectrum_pic_brush",
-                "curve_zoom_pic": "zoom_pic_brush",
-                "cross_zoom": "cross_zoom",
-            },
+            self._spectrum_brush_mapping,
             pens,
         )
 
@@ -349,20 +365,7 @@ class MainWindow(
     def _apply_ddac_markers(self, pens):
         """Configure les lignes et marqueurs dDAC selon le thème courant."""
 
-        self._apply_pen_mapping(
-            {
-                "line_t_P": "line_t",
-                "line_t_dPdt": "line_t",
-                "line_t_sigma": "line_t",
-                "line_nspec": "line_t",
-                "line_p0": "baseline_time",
-                "scatter_P": "scatter",
-                "scatter_dPdt": "scatter",
-                "scatter_sigma": "scatter",
-                "scatter_dlambda": "scatter",
-            },
-            pens,
-        )
+        self._apply_pen_mapping(self._ddac_pen_mapping, pens)
 
     def _stylize_plot(self, plot_item, x_label=None, y_label=None, show_grid=True):
         if plot_item is None:
