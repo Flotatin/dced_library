@@ -20,8 +20,19 @@ class SciAxis(pg.AxisItem):
 
 class SpectrumViewMixin:
     def _setup_spectrum_box(self):
+        self._create_spectrum_plots()
+        self._create_persistent_curves()
+        self._create_selection_items()
+        self._init_spectrum_state()
+        self._build_spectrum_controls()
+        self._connect_spectrum_events()
+        self._configure_spectrum_layout()
+
+    def _create_spectrum_plots(self) -> None:
         self.SpectraBox = QGroupBox("Spectrum")
         SpectraBoxFirstLayout = QVBoxLayout()
+
+        self._spectra_layout = SpectraBoxFirstLayout
 
         # ================== WIDGET PyQtGraph ==================
         self.pg_spec = pg.GraphicsLayoutWidget()
@@ -64,6 +75,7 @@ class SpectrumViewMixin:
         self.pg_spectrum.setLabel('bottom', 'X (U.A)')
         self.pg_spectrum.setLabel('left', 'Y (U.A)')
 
+    def _create_persistent_curves(self) -> None:
         # ================== COURBES PERSISTANTES ==================
         # Spectre corrigé
         self.curve_spec_data = self.pg_spectrum.plot()  # Spectrum.y_corr
@@ -73,21 +85,22 @@ class SpectrumViewMixin:
 
         # Filtres, baseline etc.
         self.curve_baseline_brut = self.pg_baseline.plot()
-        #self.curve_baseline_filtre = self.pg_baseline.plot()
         self.curve_baseline_blfit = self.pg_baseline.plot()
         self.curve_fft = self.pg_fft.plot()
 
         # dY
         self.curve_dy = self.pg_dy.plot()
+        self.line_dy_zero = self.pg_dy.addLine(y=0)
 
         # Zoom : zone + pic sélectionné + spectre brut / corrigé
         self.curve_zoom_data = self.pg_zoom.plot()
-        self.curve_zoom_pic = self.pg_zoom.plot(pen=None, fillLevel=0 )
+        self.curve_zoom_pic = self.pg_zoom.plot(pen=None, fillLevel=0)
         self.curve_zoom_data_brut = self.pg_zoom.plot(pen='y')
 
         # Sur le spectre principal : pic sélectionné
         self.curve_spec_pic_select = self.pg_spectrum.plot(pen=None, fillLevel=0)
 
+    def _create_selection_items(self) -> None:
         # Sélections verticales/horizontales
         self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1))
         self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('y', width=1))
@@ -107,6 +120,9 @@ class SpectrumViewMixin:
         self.zoom_exclusion_left.setVisible(False)
         self.zoom_exclusion_right.setVisible(False)
 
+    def _init_spectrum_state(self) -> None:
+        """Initialise l'état interne utilisé par les vues spectrales."""
+
         self._spectrum_limits_initialized = False  # une seule initialisation XRange
         self._zoom_limits_initialized = False
 
@@ -120,7 +136,7 @@ class SpectrumViewMixin:
         self.index_spec: int = 0
         """Numéro de spectre actuellement chargé dans l'onglet Spectrum."""
 
-        self.lines =[]
+        self.lines = []
         self.X0 = 0
         self.Y0 = 0
         self.Zone_fit = []
@@ -140,8 +156,10 @@ class SpectrumViewMixin:
         """Vrai pendant le chargement d'une jauge pour éviter les callbacks."""
         self.bit_filtre: bool = False
         """Indique qu'un filtre de spectre est actif pour le tracé courant."""
+
+    def _build_spectrum_controls(self) -> None:
         # ================== INTÉGRATION UI ==================
-        SpectraBoxFirstLayout.addWidget(self.pg_spec)
+        self._spectra_layout.addWidget(self.pg_spec)
 
         layout_check = QHBoxLayout()
         self.select_clic_box = QCheckBox("Select clic pic (q)", self)
@@ -160,17 +178,19 @@ class SpectrumViewMixin:
         self.vslmfit.setChecked(False)
         layout_check.addWidget(self.vslmfit)
 
-        SpectraBoxFirstLayout.addLayout(layout_check)
-        self.SpectraBox.setLayout(SpectraBoxFirstLayout)
+        self._spectra_layout.addLayout(layout_check)
+        self.SpectraBox.setLayout(self._spectra_layout)
         self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
 
+    def _connect_spectrum_events(self) -> None:
         # ================== EVENTS PyQtGraph ==================
         # clic sur le spectre principal
         self.pg_spectrum.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
 
-         # ================== FACTEURS LIGNES / COLONNES ==================
+    def _configure_spectrum_layout(self) -> None:
+        # ================== FACTEURS LIGNES / COLONNES ==================
         # 3 lignes : (2, 2, 1)  -> les 2 premières 2x plus grandes que la 3ème
         self._spec_row_factors = (3, 2, 1)
         # 2 colonnes : par exemple 30% (col 0) / 70% (col 1)

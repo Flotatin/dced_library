@@ -182,7 +182,6 @@ class MainWindow(
         self._setup_file_box()           # (4, 0) -> file_spectro/oscilo/movie
         self._setup_tools_tabs()         # (0, 1)
         self._setup_spectrum_box()       # (0, 2)
-        self.line_dy_zero = self.pg_dy.addLine(y=0)
         self._setup_ddac_box()           # (0, 3)
         self._setup_file_gestion()       # (2, 0)
         self._setup_python_kernel()      # (2, 2)
@@ -198,6 +197,27 @@ class MainWindow(
     def _initialize_data(self) -> None:
         self.load_latest_file()
         self.f_gauge_select()
+
+    # -----------------------------
+    # Helpers de thème
+    # -----------------------------
+    def _apply_pen_mapping(self, pen_mapping, pens) -> None:
+        """Applique une table d'association attribut -> clé de ``pens``."""
+
+        for attr, pen_key in pen_mapping.items():
+            item = getattr(self, attr, None)
+            if item is None:
+                continue
+            item.setPen(self._mk_pen(pens[pen_key]))
+
+    def _apply_brush_mapping(self, brush_mapping, pens) -> None:
+        """Applique une table d'association attribut -> clé de brosses ``pens``."""
+
+        for attr, brush_key in brush_mapping.items():
+            item = getattr(self, attr, None)
+            if item is None:
+                continue
+            item.setBrush(self._mk_brush(pens[brush_key]))
 
 
     def _apply_theme_to_spectrum(self, theme):
@@ -231,6 +251,13 @@ class MainWindow(
         ):
             return
 
+        self._apply_spectrum_background(theme)
+        self._apply_spectrum_curves(theme["pens"])
+        self.pg_text_label.setColor(theme["pens"]["text_item"])
+
+    def _apply_spectrum_background(self, theme):
+        """Rafraîchit les layouts et grilles de la zone Spectrum."""
+
         if self.pg_spec.isVisible():
             self.pg_spec.setBackground(theme["plot_background"])
 
@@ -245,22 +272,34 @@ class MainWindow(
             theme,
         )
 
-        pens = theme["pens"]
-        self.curve_spec_data.setPen(self._mk_pen(pens["spectrum_data"]))
-        self.curve_spec_fit.setPen(self._mk_pen(pens["spectrum_fit"]))
-        self.curve_spec_pic_select.setBrush(self._mk_brush(pens["spectrum_pic_brush"]))
-        self.curve_dy.setPen(self._mk_pen(pens["dy"]))
-        self.line_dy_zero.setPen(self._mk_pen(pens["zero_line"]))
-        self.curve_baseline_brut.setPen(self._mk_pen(pens["baseline_brut"]))
-        self.curve_baseline_blfit.setPen(self._mk_pen(pens["baseline_fit"]))
-        self.curve_fft.setPen(self._mk_pen(pens["fft"]))
-        self.curve_zoom_data.setPen(self._mk_pen(pens["zoom_data"]))
-        self.curve_zoom_data_brut.setPen(self._mk_pen(pens["zoom_data_brut"]))
-        self.curve_zoom_pic.setBrush(self._mk_brush(pens["zoom_pic_brush"]))
-        self.vline.setPen(self._mk_pen(pens["selection_line"]))
-        self.hline.setPen(self._mk_pen(pens["selection_line"]))
-        self.cross_zoom.setBrush(self._mk_brush(pens["cross_zoom"]))
-        self.pg_text_label.setColor(pens["text_item"])
+    def _apply_spectrum_curves(self, pens):
+        """Applique les couleurs de thème aux courbes et marqueurs Spectrum."""
+
+        self._apply_pen_mapping(
+            {
+                "curve_spec_data": "spectrum_data",
+                "curve_spec_fit": "spectrum_fit",
+                "curve_dy": "dy",
+                "line_dy_zero": "zero_line",
+                "curve_baseline_brut": "baseline_brut",
+                "curve_baseline_blfit": "baseline_fit",
+                "curve_fft": "fft",
+                "curve_zoom_data": "zoom_data",
+                "curve_zoom_data_brut": "zoom_data_brut",
+                "vline": "selection_line",
+                "hline": "selection_line",
+            },
+            pens,
+        )
+
+        self._apply_brush_mapping(
+            {
+                "curve_spec_pic_select": "spectrum_pic_brush",
+                "curve_zoom_pic": "zoom_pic_brush",
+                "cross_zoom": "cross_zoom",
+            },
+            pens,
+        )
 
     def _apply_theme_to_ddac(self, theme):
         """Applique le thème à la zone dDAC et recalcule la palette couleur."""
@@ -301,23 +340,29 @@ class MainWindow(
             theme,
         )
 
-        pens = theme["pens"]
-        line_pen = self._mk_pen(pens["line_t"])
-        self.line_t_P.setPen(line_pen)
-        self.line_t_dPdt.setPen(line_pen)
-        self.line_t_sigma.setPen(line_pen)
-        self.line_nspec.setPen(line_pen)
-        self.line_p0.setPen(self._mk_pen(pens["baseline_time"]))
-
-        scatter_pen = self._mk_pen(pens["scatter"])
-        self.scatter_P.setPen(scatter_pen)
-        self.scatter_dPdt.setPen(scatter_pen)
-        self.scatter_sigma.setPen(scatter_pen)
-        self.scatter_dlambda.setPen(scatter_pen)
+        self._apply_ddac_markers(theme["pens"])
 
         if hasattr(self, "c_m_base"):
             self.c_m_base = make_c_m(self.current_theme)
         self._recolor_all_runs()
+
+    def _apply_ddac_markers(self, pens):
+        """Configure les lignes et marqueurs dDAC selon le thème courant."""
+
+        self._apply_pen_mapping(
+            {
+                "line_t_P": "line_t",
+                "line_t_dPdt": "line_t",
+                "line_t_sigma": "line_t",
+                "line_nspec": "line_t",
+                "line_p0": "baseline_time",
+                "scatter_P": "scatter",
+                "scatter_dPdt": "scatter",
+                "scatter_sigma": "scatter",
+                "scatter_dlambda": "scatter",
+            },
+            pens,
+        )
 
     def _stylize_plot(self, plot_item, x_label=None, y_label=None, show_grid=True):
         if plot_item is None:
