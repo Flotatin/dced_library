@@ -14,8 +14,8 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from pynverse import inversefunc
-from PyQt5.QtCore import QThreadPool, QTimer, Qt, pyqtSlot
-from PyQt5.QtGui import QColor, QFont, QPalette
+from PyQt5.QtCore import Qt, pyqtSlot
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -34,11 +34,11 @@ from PyQt5.QtWidgets import (
 )
 from scipy.optimize import curve_fit
 
-from theme_config import STYLE_TEMPLATE, THEMES, make_c_m
+from theme_config import make_c_m
 from ui_layout import UiLayoutMixin
 from spectrum_view import SpectrumViewMixin
 from ddac_view import DdacViewMixin, RunViewState
-from background_tasks import TaskRunnable
+from ui_services import BackgroundTaskMixin, RunStateMixin, ThemeMixin
 
 logger = logging.getLogger(__name__)
 
@@ -110,18 +110,32 @@ class ProgressDialog(QDialog):
         """
         return (not self.was_canceled, None, None)
 
-class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
+class MainWindow(
+    QMainWindow,
+    UiLayoutMixin,
+    SpectrumViewMixin,
+    DdacViewMixin,
+    ThemeMixin,
+    BackgroundTaskMixin,
+    RunStateMixin,
+):
     def __init__(self, folder_start=None):
         super().__init__()
 
-        self.current_theme = "dark"
-        self._theme_cache = {}
-        self.thread_pool = QThreadPool.globalInstance()
-        self._running_tasks = []
-        self._disabled_widgets = []
-        self._task_watchdogs = {}
+        self._init_state(folder_start)
+        self._build_ui()
+        self._connect_main_signals()
+        self._initialize_data()
 
-        # --- Variables "métier" de base ---
+        if Setup_mode is True:
+            self._run_setup_mode()
+            print("setup mode RUN")
+
+    def _init_state(self, folder_start: Optional[str]) -> None:
+        self._init_theme_state()
+        self._init_task_state()
+        self._init_run_state()
+
         self.Spectrum = None
         self.valeurs_boutons = [True,True, True,False,True,True,True]
         self.name_boutons= ["dP\dt","T","Piézo","Image Correlation","M2R","use Movie file","print P"]
@@ -133,21 +147,13 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.data_Spectro=None
         self.RUN = None
 
-        # Autres attributs divers
         self.viewer = None
         self.is_reduced_column_mode: bool = True
         """Réduit l'affichage des colonnes Spectrum lorsque True."""
 
-        # Nouvelle bibliothèque d'états par CEDd (clé stable -> RunViewState)
-        self.runs = {}
-        self.current_run_id = None
-
-        self.file_index_map = {}          # key = index dans self.liste_fichiers, value = run_id
         self.liste_objets = []  # liste des CEDd chargés (legacy)
         self.index_select = -1
 
-
-        # États init pour éviter les accès à des attributs non initialisés
         self.is_selecting_dp_range: bool = False
         """True après un clic sur Pstart, en attente du clic Pend."""
         self.Pstart: Optional[float] = None
@@ -161,21 +167,18 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         self.x_clic: float = 0.0
         self.y_clic: float = 0.0
 
-        # Chemin de base
         if folder_start is None:
             folder_start = r"E:\Aquisition_Banc_CEDd"
         self.folder_start = folder_start
 
-        # --- Config fenêtre ---
+    def _build_ui(self) -> None:
         self._setup_main_window()
 
-        # --- Layout central ---
         self.grid_layout = QGridLayout()
         central_widget = QWidget()
         central_widget.setLayout(self.grid_layout)
         self.setCentralWidget(central_widget)
 
-        # --- Construction des différentes sections UI ---
         self._setup_file_box()           # (4, 0) -> file_spectro/oscilo/movie
         self._setup_tools_tabs()         # (0, 1)
         self._setup_spectrum_box()       # (0, 2)
@@ -189,197 +192,13 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
         self._apply_theme(self.current_theme)
 
-        
+    def _connect_main_signals(self) -> None:
+        self._apply_theme_toggle_state()
 
-        # Initialisation logique légère
+    def _initialize_data(self) -> None:
         self.load_latest_file()
         self.f_gauge_select()
 
-        # Setup debug optionnel
-        if Setup_mode is True:
-            self._run_setup_mode()
-            print("setup mode RUN")
-
-    # ==================================================================
-    # ===============   UTILITAIRES ÉTAT DE RUN   ======================
-    # ==================================================================
-    def _get_theme_resources(self, name: Optional[str] = None):
-        theme_name = name or self.current_theme
-        base_theme = THEMES.get(theme_name, THEMES["dark"])
-
-        cache_entry = self._theme_cache.get(theme_name)
-        if cache_entry is None:
-            cache_entry = {
-                "theme": base_theme,
-                "palette": None,
-                "pen_cache": {},
-                "brush_cache": {},
-                "stylesheet": None,
-            }
-            self._theme_cache[theme_name] = cache_entry
-
-        if cache_entry["theme"] is not base_theme:
-            cache_entry.update(
-                {
-                    "theme": base_theme,
-                    "palette": None,
-                    "pen_cache": {},
-                    "brush_cache": {},
-                    "stylesheet": None,
-                }
-            )
-
-        if cache_entry.get("palette") is None:
-            palette = QPalette()
-            palette.setColor(QPalette.Window, QColor(base_theme["window"]))
-            palette.setColor(QPalette.WindowText, QColor(base_theme["text"]))
-            palette.setColor(QPalette.Base, QColor(base_theme["background"]))
-            palette.setColor(QPalette.Text, QColor(base_theme["text"]))
-            cache_entry["palette"] = palette
-
-        return cache_entry
-
-    def _get_theme(self, name: Optional[str] = None):
-        return self._get_theme_resources(name)["theme"]
-
-    def _cache_key(self, spec):
-        if isinstance(spec, dict):
-            try:
-                return ("dict", tuple(sorted(spec.items())))
-            except TypeError:
-                return ("dict_repr", repr(spec))
-        return ("val", spec)
-
-    def _mk_pen(self, spec, theme_name: Optional[str] = None):
-        cache_entry = self._get_theme_resources(theme_name)
-        key = self._cache_key(spec)
-        pens = cache_entry["pen_cache"]
-        if key not in pens:
-            pens[key] = pg.mkPen(**spec) if isinstance(spec, dict) else pg.mkPen(spec)
-        return pens[key]
-
-    def _mk_brush(self, spec, theme_name: Optional[str] = None):
-        cache_entry = self._get_theme_resources(theme_name)
-        key = self._cache_key(spec)
-        brushes = cache_entry["brush_cache"]
-        if key not in brushes:
-            brushes[key] = pg.mkBrush(spec)
-        return brushes[key]
-
-    def _report_warning(self, message: str):
-        """Loggue un avertissement et l'affiche dans la zone de statut si possible."""
-
-        logger.warning(message)
-        if hasattr(self, "text_box_msg"):
-            self.text_box_msg.setText(message)
-
-    def _require_attributes(self, attrs, context: str) -> bool:
-        """Vérifie la présence des attributs indispensables et loggue si absent."""
-
-        missing = [attr for attr in attrs if not hasattr(self, attr)]
-        if missing:
-            self._report_warning(
-                f"{context} interrompu : attribut(s) manquant(s) {', '.join(missing)}."
-            )
-            return False
-        return True
-
-    def _build_stylesheet(self, theme):
-        try:
-            return STYLE_TEMPLATE.safe_substitute(
-                window=theme["window"],
-                background=theme["background"],
-                text=theme["text"],
-                accent=theme["accent"],
-                accent_hover=theme["accent_hover"],
-                accent_pressed=theme["accent_pressed"],
-                input_background=theme["input_background"],
-                selection=theme["selection"],
-                selection_text=theme["selection_text"],
-                menu_background=theme["menu_background"],
-                button_text=theme["button_text"],
-            )
-        except Exception as exc:
-            self._report_warning(f"Failed to build stylesheet: {exc}")
-            return ""
-
-    def _apply_plot_item_theme(self, plot_item, theme):
-        """Applique le thème à un objet PyQtGraph :
-        - GraphicsLayoutWidget
-        - PlotItem
-        - ViewBox
-        """
-        if plot_item is None:
-            return
-
-        # 1) GraphicsLayoutWidget (pg.GraphicsLayoutWidget)
-        if isinstance(plot_item, pg.GraphicsLayoutWidget):
-            plot_item.setBackground(theme["plot_background"])
-            return
-
-        # 2) ViewBox direct (ex: self.pg_text)
-        if isinstance(plot_item, pg.ViewBox):
-            # ViewBox possède bien setBackgroundColor
-            plot_item.setBackgroundColor(theme["plot_background"])
-            return
-
-        # 3) PlotItem classique
-        # (pg.PlotItem, ce que renvoie addPlot)
-        vb = plot_item.getViewBox()
-        if vb is not None and hasattr(vb, "setBackgroundColor"):
-            vb.setBackgroundColor(theme["plot_background"])
-
-        axis_pen = self._mk_pen(theme["axis_pen"])
-        text_pen = self._mk_pen(theme["text"])
-
-        for name in ("bottom", "left", "right", "top"):
-            axis = plot_item.getAxis(name)
-            if axis is not None:
-                axis.setPen(axis_pen)
-                axis.setTextPen(text_pen)
-
-        plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
-
-    def _apply_theme_toggle_state(self):
-        """Met à jour l'interrupteur light/dark sans déclencher de signaux."""
-
-        if not hasattr(self, "theme_toggle_button"):
-            return
-
-        self.theme_toggle_button.blockSignals(True)
-        self.theme_toggle_button.setChecked(self.current_theme == "light")
-        self.theme_toggle_button.setText(
-            "Light mode" if self.current_theme == "light" else "Dark mode"
-        )
-        self.theme_toggle_button.blockSignals(False)
-
-    def _apply_theme_stylesheet(self, theme):
-        """Applique la feuille de style Qt en fonction du thème calculé."""
-
-        cache_entry = self._get_theme_resources(self.current_theme)
-
-        if not cache_entry.get("stylesheet"):
-            cache_entry["stylesheet"] = self._build_stylesheet(theme)
-
-        stylesheet = cache_entry["stylesheet"]
-        if not stylesheet:
-            self._report_warning("Feuille de style vide : thème invalide ou incomplet.")
-            return
-
-        self.setPalette(cache_entry["palette"])
-        self.setStyleSheet(stylesheet)
-
-    def _refresh_visible_plots(self, plots, theme):
-        for plot in plots:
-            if plot is None:
-                continue
-            if hasattr(plot, "isVisible") and not plot.isVisible():
-                continue
-            self._apply_plot_item_theme(plot, theme)
-
-    def _refresh_visible_lists(self, lists_of_plots, theme):
-        for plot_list in lists_of_plots:
-            self._refresh_visible_plots(plot_list, theme)
 
     def _apply_theme_to_spectrum(self, theme):
         """Applique le thème à la zone Spectrum (courbes + grilles)."""
@@ -500,52 +319,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
             self.c_m_base = make_c_m(self.current_theme)
         self._recolor_all_runs()
 
-    def _apply_theme_to_text_view(self, theme):
-        """Met à jour le fond du ViewBox texte côté dDAC."""
-
-        if hasattr(self, "pg_text"):
-            self.pg_text.setBackgroundColor(theme["plot_background"])
-
-    def _apply_axis_fonts(self):
-        """Uniformise la police des axes PyQtGraph pour tous les plots."""
-
-        font = QFont("Segoe UI", 11)
-
-        def _set_axes_font(plot_item):
-            if plot_item is None:
-                return
-            for name in ("bottom", "left"):
-                axis = plot_item.getAxis(name)
-                if axis is not None:
-                    axis.setTickFont(font)
-
-        for plot in (
-            getattr(self, "pg_zoom", None),
-            getattr(self, "pg_baseline", None),
-            getattr(self, "pg_fft", None),
-            getattr(self, "pg_dy", None),
-            getattr(self, "pg_spectrum", None),
-            getattr(self, "pg_P", None),
-            getattr(self, "pg_dPdt", None),
-            getattr(self, "pg_sigma", None),
-            getattr(self, "pg_dlambda", None),
-        ):
-            _set_axes_font(plot)
-
-    def _apply_theme(self, theme_name: str):
-        self.current_theme = theme_name if theme_name in THEMES else "dark"
-        theme = self._get_theme(self.current_theme)
-
-        self._apply_theme_toggle_state()
-        self._apply_theme_stylesheet(theme)
-        self._apply_theme_to_spectrum(theme)
-        self._apply_theme_to_ddac(theme)
-        self._apply_theme_to_text_view(theme)
-        self._apply_axis_fonts()
-
-    def _toggle_theme(self, checked: bool):
-        self._apply_theme("light" if checked else "dark")
-
     def _stylize_plot(self, plot_item, x_label=None, y_label=None, show_grid=True):
         if plot_item is None:
             return
@@ -601,82 +374,6 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
 
             self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
             self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
-
-    # ==================================================================
-    # ===============   INFRASTRUCTURE THREADS   =======================
-    # ==================================================================
-    def _task_widgets_default(self):
-        return [
-            getattr(self, "previous_button", None),
-            getattr(self, "play_stop_button", None),
-            getattr(self, "next_button", None),
-            getattr(self, "slider", None),
-        ]
-
-    def _set_busy_state(self, busy: bool, message: str = "", widgets=None):
-        if widgets is None:
-            widgets = self._task_widgets_default()
-
-        if busy:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            self.statusBar().showMessage(message, 5000)
-            self._disabled_widgets = []
-            for w in widgets:
-                if w is not None and w.isEnabled():
-                    w.setEnabled(False)
-                    self._disabled_widgets.append(w)
-        else:
-            QApplication.restoreOverrideCursor()
-            for w in self._disabled_widgets:
-                try:
-                    w.setEnabled(True)
-                except Exception:
-                    pass
-            self._disabled_widgets = []
-
-    def _submit_background_task(
-        self,
-        func,
-        result_slot=None,
-        description: str = "",
-        widgets=None,
-        timeout_ms: int = 20000,
-    ):
-        worker = TaskRunnable(func)
-
-        if result_slot is not None:
-            worker.signals.result.connect(result_slot)
-        worker.signals.error.connect(self._on_task_error)
-
-        def _cleanup():
-            self._set_busy_state(False, widgets=widgets)
-            timer = self._task_watchdogs.pop(worker, None)
-            if timer:
-                timer.stop()
-                timer.deleteLater()
-            try:
-                self._running_tasks.remove(worker)
-            except ValueError:
-                pass
-
-        worker.signals.finished.connect(_cleanup)
-
-        timer = QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(
-            lambda: logger.warning("Long running task (> %sms): %s", timeout_ms, description)
-        )
-        timer.start(timeout_ms)
-        self._task_watchdogs[worker] = timer
-
-        self._set_busy_state(True, message=description, widgets=widgets)
-        self.thread_pool.start(worker)
-        self._running_tasks.append(worker)
-
-    @pyqtSlot(str)
-    def _on_task_error(self, traceback_msg: str):
-        logger.error("Background task error:\n%s", traceback_msg)
-        self.text_box_msg.setText("Erreur dans une tâche en arrière-plan. Voir logs.")
 
     # ==================================================================
     # ===============   SETUP MODE POUR DEBUG  =========================
