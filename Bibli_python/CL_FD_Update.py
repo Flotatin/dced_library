@@ -75,8 +75,10 @@ def Load_last(Folder,extend=None,file=True):
         file_names.sort(key=lambda f: os.path.getmtime(os.path.join(Folder, f)))
         latest_file_name = file_names[-1]
         latest_file_path = os.path.join(Folder, latest_file_name)
-    return latest_file_path, latest_file_name
-
+    
+        return latest_file_path, latest_file_name
+    else:
+        return None,None
 """ ------------------------------------- FENETRE UTILE -------------------------------------"""
 
 class ProgressDialog(QDialog):

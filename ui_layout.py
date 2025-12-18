@@ -115,7 +115,6 @@ class UiLayoutMixin:
         self.tools_tabs.setTabPosition(QTabWidget.West)
 
         self._setup_tab_gauge()
-        self._setup_tab_fit()
         self._setup_tab_data_treatment()
         self._setup_tab_help_and_commande()
         self._setup_tab_tools_checks()
@@ -312,71 +311,6 @@ class UiLayoutMixin:
 
         # Enfin : ajout de l’onglet dans le QTabWidget
         self.tools_tabs.addTab(self.tab_gauge, "Gauge & Peak")
-
-    def _setup_tab_fit(self):
-        self.tab_fit = QWidget()
-        layout = QVBoxLayout(self.tab_fit)
-
-        name = QLabel("fit param")
-        layout.addWidget(name)
-        """
-        self.spinbox_cycle = QSpinBox()
-        self.spinbox_cycle.valueChanged.connect(self.setFocus)
-        self.spinbox_cycle.setRange(0, 10)
-        self.spinbox_cycle.setSingleStep(1)
-        self.spinbox_cycle.setValue(1)
-        layout.addLayout(creat_spin_label(self.spinbox_cycle, "nb<sub>cycle</sub> (Y):"))
-
-        self.sigma_pic_fit_entry = QSpinBox()
-        self.sigma_pic_fit_entry.valueChanged.connect(self.setFocus)
-        self.sigma_pic_fit_entry.setRange(1, 20)
-        self.sigma_pic_fit_entry.setSingleStep(1)
-        self.sigma_pic_fit_entry.setValue(2)
-        self.sigma_pic_fit_entry.valueChanged.connect(
-            lambda _value: self._update_fit_window() if getattr(self, "index_pic_select", None) is not None else None
-        )
-
-        layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nb σ (R)"))
-
-        self.inter_entry = QDoubleSpinBox()
-        self.inter_entry.valueChanged.connect(self.setFocus)
-        self.inter_entry.setRange(0.1, 5)
-        self.inter_entry.setSingleStep(0.1)
-        self.inter_entry.setValue(1)
-        layout.addLayout(creat_spin_label(self.inter_entry, "% variation fit"))
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(sep)
-
-        name = QLabel("Multi fit")
-        layout.addWidget(name)
-
-        self.add_btn = QPushButton("Ajouter une zone")
-        self.add_btn.clicked.connect(self.add_zone)
-        layout.addWidget(self.add_btn)
-
-        self.remove_btn = QPushButton("Supprimer la zone sélectionnée")
-        self.remove_btn.clicked.connect(self.dell_zone)
-        self.remove_btn.setEnabled(False)
-        layout.addWidget(self.remove_btn)
-
-        self.index_start_entry = QSpinBox()
-        self.index_start_entry.setRange(0, 2000)
-        self.index_start_entry.setValue(1)
-        layout.addLayout(creat_spin_label(self.index_start_entry, "Index start"))
-
-        self.index_stop_entry = QSpinBox()
-        self.index_stop_entry.setRange(0, 2000)
-        self.index_stop_entry.setValue(10)
-        layout.addLayout(creat_spin_label(self.index_stop_entry, "Index stop"))
-
-        self.multi_fit_button = QPushButton("Launch multi fit")
-        self.multi_fit_button.clicked.connect(self._CED_multi_fit)
-        layout.addWidget(self.multi_fit_button)
-        """
-        self.tools_tabs.addTab(self.tab_fit, "Fit")
 
     def _setup_tab_help_and_commande(self):
         self.tab_help_and_commande = QWidget()
@@ -583,14 +517,14 @@ class UiLayoutMixin:
 
         self.deltalambdaP = 0
 
-        layh4.addWidget(QLabel("λ or σ="))
+        layh4.addWidget(QLabel("λ=")) #or σ=
         self.spinbox_x = QDoubleSpinBox()
         self.spinbox_x.setRange(0, 4000)
         self.spinbox_x.setSingleStep(0.1)
         self.spinbox_x.setValue(0.0)
         self.spinbox_x.valueChanged.connect(self.spinbox_x_move)
         layh4.addWidget(self.spinbox_x)
-        layh4.addWidget(QLabel("nm or cm<sup>-1<\sup>"))
+        layh4.addWidget(QLabel("nm")) #or cm<sup>-1<\sup>
 
         layh4.addWidget(QLabel("T="))
         self.spinbox_T = QDoubleSpinBox()
@@ -622,202 +556,3 @@ class UiLayoutMixin:
 
         if hasattr(self, "_spectrum_right_layout"):
             self._spectrum_right_layout.insertWidget(0, self.AddBox)
-
-
-"""
-    def _setup_ddac_box(self):
-        group_graphique = QGroupBox("dDAC")
-        layout_graphique = QVBoxLayout()
-
-        movie_layout = QHBoxLayout()
-        # Slider Qt pour index d'image
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(0)  # sera mis à jour après chargement
-        self.slider.setSingleStep(1)
-        self.slider.valueChanged.connect(self._on_slider_movie_changed)
-        movie_layout.addWidget(self.slider)
-
-        # Boutons précédent / play / suivant
-        self.previous_button = QPushButton("⟵")
-        self.previous_button.clicked.connect(self.previous_image)
-        movie_layout.addWidget(self.previous_button)
-
-        self.play_stop_button = QPushButton("play/stop")
-        self.play_stop_button.clicked.connect(self.f_play_stop_movie)
-        movie_layout.addWidget(self.play_stop_button)
-
-        self.next_button = QPushButton("⟶")
-        self.next_button.clicked.connect(self.next_image)
-        movie_layout.addWidget(self.next_button)
-
-        layout_graphique.addLayout(movie_layout)
-        # FPS
-
-        self.fps_play_spinbox = QSpinBox()
-        self.fps_play_spinbox.setRange(1, 1000)
-        self.fps_play_spinbox.setValue(100)
-        movie_layout.addWidget(QLabel("fps:"))
-        movie_layout.addWidget(self.fps_play_spinbox)
-
-        # ================== WIDGET PyQtGraph ==================
-        self.pg_ddac = pg.GraphicsLayoutWidget()
-
-        # Col 0 : P, dP/dt/T, sigma
-        self.pg_P = self.pg_ddac.addPlot(row=0, col=0)
-        self.pg_P.setLabel('bottom', 'Time (s)')
-        self.pg_P.setLabel('left', 'P (GPa)')
-
-        self.pg_dPdt = self.pg_ddac.addPlot(row=1, col=0)
-        self.pg_dPdt.setLabel('bottom', 'Time (s)')
-        self.pg_dPdt.setLabel('left', 'dP/dt (GPa/ms), T (K)')
-
-        self.pg_sigma = self.pg_ddac.addPlot(row=2, col=0)
-        self.pg_sigma.setLabel('bottom', 'Time (s)')
-        self.pg_sigma.setLabel('left', 'sigma (nm)')
-
-        # Col 1 : IMAGE + Δλ
-        self.pg_movie = self.pg_ddac.addPlot(row=0, col=1)
-        self.pg_movie.setAspectLocked(True)
-        self.pg_movie.hideAxis('bottom')
-        self.pg_movie.hideAxis('left')
-        self.img_item = pg.ImageItem()
-        self.pg_movie.addItem(self.img_item)
-
-        self.pg_text = self.pg_ddac.addViewBox(row=1, col=1)
-        self.pg_text.setAspectLocked(False)
-        self.pg_text.enableAutoRange(False)
-
-        self.pg_text_label = pg.TextItem("Liberté \n égalité \n dDACité")
-        self.pg_text.addItem(self.pg_text_label)
-        self.pg_text_label.setAnchor((0.5, 0.5))
-        self.pg_text_label.setPos(0, 0)
-        self.pg_text.setRange(xRange=(-1, 1), yRange=(-1, 1))
-
-        self.pg_dlambda = self.pg_ddac.addPlot(row=2, col=1)
-        self.pg_dlambda.setLabel('bottom', 'Spectrum index')
-        self.pg_dlambda.setLabel('left', 'Δλ12 (nm)')
-
-        # ================== COURBES PERSISTANTES ==================
-        self.curves_P = []        # une courbe par jauge
-        self.curves_dPdt = []
-        self.curves_sigma = []
-        self.curves_T = []
-        self.curve_piezo_list = []
-        self.curve_corr_list = []
-        self.curves_dlambda = []
-
-        # Ligne verticale pour t sélectionné
-        self.line_t_P = pg.InfiniteLine(angle=90, movable=False)
-        self.line_t_dPdt = pg.InfiniteLine(angle=90, movable=False)
-        self.line_t_sigma = pg.InfiniteLine(angle=90, movable=False)
-        self.line_p0 = pg.InfiniteLine(0, angle=0, movable=False)
-        self.pg_P.addItem(self.line_p0)
-        self.pg_P.addItem(self.line_t_P)
-        self.pg_dPdt.addItem(self.line_t_dPdt)
-        self.pg_sigma.addItem(self.line_t_sigma)
-
-        self.line_nspec = pg.InfiniteLine(angle=90, movable=False)
-        self.pg_dlambda.addItem(self.line_nspec)
-
-        # Zone temporelle film (bornes)
-        self.zone_movie = [None, None]
-        self.zone_movie_lines = [
-            pg.InfiniteLine(angle=90, movable=False),
-            pg.InfiniteLine(angle=90, movable=False)
-        ]
-        for line in self.zone_movie_lines:
-            self.pg_P.addItem(line)
-
-        # ================== MARQUEURS DE CLIC (SCATTER CROIX) ==================
-        # Un scatter par graphe pour montrer la position exacte du clic
-
-        self.scatter_P = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,          # pas de remplissage
-            size=10,
-            symbol='+'           # croix
-        )
-        self.pg_P.addItem(self.scatter_P)
-
-        self.scatter_dPdt = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
-        self.pg_dPdt.addItem(self.scatter_dPdt)
-
-        self.scatter_sigma = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
-        self.pg_sigma.addItem(self.scatter_sigma)
-
-        self.scatter_dlambda = pg.ScatterPlotItem(
-            x=[], y=[],
-            pen=None,
-            brush=None,
-            size=10,
-            symbol='+'
-        )
-        self.pg_dlambda.addItem(self.scatter_dlambda)
-
-        # ================== ÉTAT DYNAMIQUE (film) ==================
-        self.current_index = 0
-        self.index_playing = 0
-        self.playing_movie = False
-        self.t_cam = []       # liste par CEDd
-        self.index_cam = []
-        self.cap = []         # VideoCapture si tu gardes OpenCV
-        self.correlations = []
-        self.time = []
-        self.spectre_number = []
-
-        # ================== INTÉGRATION WIDGET GRAPHIQUE ==================
-        layout_graphique.addWidget(self.pg_ddac)
-
-        # ================== CONTROLES Qt (slider + boutons) ==================
-        controls_layout = QHBoxLayout()
-
-        self.label_CED = QLabel('CEDd file select:', self)
-        self.label_CED.setFont(QFont("Arial", 8))
-        controls_layout.addWidget(self.label_CED)
-
-        self.movie_select_box = QCheckBox("clic frame (m)", self)
-        self.movie_select_box.setChecked(True)
-        controls_layout.addWidget(self.movie_select_box)
-
-        self.spectrum_select_box = QCheckBox("clic spectrum (h)", self)
-        self.spectrum_select_box.setChecked(True)
-        controls_layout.addWidget(self.spectrum_select_box)
-
-        layout_graphique.addLayout(controls_layout)
-
-        group_graphique.setLayout(layout_graphique)
-
-        self.grid_layout.addWidget(group_graphique, 0, 3, 3, 1)
-
-        # Timer Qt pour le mode "lecture"
-        self.timerMovie = QTimer(self)
-        self.timerMovie.timeout.connect(self.play_movie)
-
-        self.pg_P.scene().sigMouseClicked.connect(self._on_ddac_click)
-        self.pg_dPdt.scene().sigMouseClicked.connect(self._on_ddac_click)
-        self.pg_sigma.scene().sigMouseClicked.connect(self._on_ddac_click)
-        self.pg_dlambda.scene().sigMouseClicked.connect(self._on_ddac_click)
-
-        # On force une taille de colonnes/hauteurs pour mieux voir
-        self._ddac_row_factors = (1, 1, 1)
-        self._ddac_col_factors = (3, 7)
-        self._update_graphicslayout_sizes(
-            self.pg_ddac,
-            row_factors=self._ddac_row_factors,
-            col_factors=self._ddac_col_factors,
-        )
-"""

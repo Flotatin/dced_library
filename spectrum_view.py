@@ -205,9 +205,9 @@ class SpectrumViewMixin:
     def _connect_spectrum_events(self) -> None:
         # ================== EVENTS PyQtGraph ==================
         # clic sur le spectre principal
-        self.pg_spectrum.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
-        self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
-        self.pg_dy.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        self.pg_spec.scene().sigMouseClicked.connect(self._on_pg_spec_scene_click)
+        self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_zoom_scene_click)
+        #self.pg_dy.scene().sigMouseClicked.connect(self._on_pg_spec_scene_click)
         # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
 
     def _configure_spectrum_layout(self) -> None:
@@ -384,55 +384,58 @@ class SpectrumViewMixin:
         else:
             right_region.setVisible(False)
 
-    def _on_pg_spectrum_click(self, mouse_event):
-        """Gère le clic gauche sur les vues spectrales et met à jour les marqueurs.
-
-        Le point cliqué est d'abord converti des coordonnées scène vers le ViewBox
-        actif (spectre principal ou zoom) afin de récupérer (x, y). Ces valeurs
-        déplacent les lignes infinies, la croix de zoom et peuvent déclencher la
-        sélection d'un pic lorsque la case « clic = select pic » est cochée.
-        """
+    def _on_pg_spec_scene_click(self, mouse_event):
         if mouse_event.button() != Qt.LeftButton:
             return
 
         pos = mouse_event.scenePos()
 
-        # --- déterminer sur quel plot on a cliqué ---
-        clicked_on_spec = self.pg_spectrum.sceneBoundingRect().contains(pos)
-        clicked_on_zoom = self.pg_zoom.sceneBoundingRect().contains(pos)
-        clicked_on_dy = self.pg_dy.sceneBoundingRect().contains(pos)
+        def vb_if_hit(plot_item):
+            vb = plot_item.getViewBox()
+            return vb if vb.sceneBoundingRect().contains(pos) else None
 
+        vb_spec = vb_if_hit(self.pg_spectrum)
+        vb_dy   = vb_if_hit(self.pg_dy)
 
-        if not (clicked_on_spec or clicked_on_zoom or clicked_on_dy):
-            return
+        vb = vb_spec or vb_dy
+        if vb is None:
+            return  # clic dans axes/marges -> ignoré (comportement propre)
 
-        if clicked_on_zoom:
-            vb = self.pg_zoom.getViewBox()
-        elif clicked_on_spec:
-            vb = self.pg_spectrum.getViewBox()
-        else: #elif clicked_on_dy:
-            vb = self.pg_dy.getViewBox()
+        p = vb.mapSceneToView(pos)
+        x, y = float(p.x()), float(p.y())
 
-        mouse_point = vb.mapSceneToView(pos)
-        x = mouse_point.x()
-        y = mouse_point.y()
-
-        # Conversion scène -> axes du plot : x = position spectrale, y = intensité
         self.X0, self.Y0 = x, y
         self.vline_spec.setPos(x)
         self.vline_dy.setPos(x)
-        self.vline_zoom.setPos(x)
-        if clicked_on_spec or clicked_on_zoom:
+
+        if vb is vb_spec:
             self.hline_spec.setPos(y)
+            if self.select_clic_box.isChecked():
+                self._select_nearest_pic_from_x(x)
+
         self._update_curve_safe(self.cross_zoom, [x], [y])
 
-        # Si tu veux garder la logique "clic = sélectionner/placer un pic"
-        # → seulement quand on clique dans le spectre principal
-        if self.select_clic_box.isChecked() and clicked_on_spec:
-            try:
-                self._select_nearest_pic_from_x(x)
-            except Exception as e:
-                print("Error in _select_nearest_pic_from_x:", e)
+    def _on_pg_zoom_scene_click(self, mouse_event):
+        if mouse_event.button() != Qt.LeftButton:
+            return
+
+        pos = mouse_event.scenePos()
+        vb = self.pg_zoom.getViewBox()
+
+        if not vb.sceneBoundingRect().contains(pos):
+            return
+
+        p = vb.mapSceneToView(pos)
+        x, y = float(p.x()), float(p.y())
+
+        self.X0, self.Y0 = x, y
+        self.vline_zoom.setPos(x)
+        self.hline_spec.setPos(y)  # si tu veux aussi bouger l’horizontal global
+        self.vline_spec.setPos(x)
+        self.vline_dy.setPos(x)
+
+        self._update_curve_safe(self.cross_zoom, [x], [y])
+
 
     def _select_nearest_pic_from_x(self, x):
         if self.Spectrum is None or self.Param0 is None:
@@ -565,10 +568,12 @@ class SpectrumViewMixin:
                 self._update_curve_safe(self.curve_spec_brut, [], [])
 
             if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "blfit") and S.blfit is not None:
+                """
                 if getattr(S, "indexX", None) is not None:
                     self._update_curve_safe(self.curve_spec_blfit, S.wnb[S.indexX], S.blfit[S.indexX])
                 else:
-                    self._update_curve_safe(self.curve_spec_blfit, S.wnb, S.blfit)
+                """
+                self._update_curve_safe(self.curve_spec_blfit, S.wnb, S.blfit)
             else:
                 self._update_curve_safe(self.curve_spec_blfit, [], [])
         else:

@@ -50,8 +50,8 @@ pg.setConfigOptions(
 
 Setup_mode = False
 
-folder_start=r"F:\Aquisition_Banc_CEDd"
-folder_CEDd=r"F:\Aquisition_Banc_CEDd\Fichier_CEDd"#r"C:\Users\dDAC-LHPS\Desktop\PROG_FLO_dDAC\Aquisition_Banc_CEDd\Fichier_CEDd"
+folder_start=r"C:\Users\flifl\Desktop\These\Figure\Article Decompression\Aquisition_Banc_CEDd" #F:\Aquisition_Banc_CEDd"
+folder_CEDd=r"C:\Users\flifl\Desktop\These\Figure\Article Decompression\Aquisition_Banc_CEDd\Fichier_CEDd"#r"C:\Users\dDAC-LHPS\Desktop\PROG_FLO_dDAC\Aquisition_Banc_CEDd\Fichier_CEDd" F:\Aquisition_Banc_CEDd\Fichier_CEDd"
 
 from Bibli_python import CL_FD_Update as CL
 
@@ -126,7 +126,7 @@ class MainWindow(
         self._build_ui()
         self._connect_main_signals()
         self._initialize_data()
-        
+
         if Setup_mode is True:
             self._run_setup_mode()
             print("setup mode RUN")
