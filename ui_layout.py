@@ -611,13 +611,10 @@ class UiLayoutMixin:
         self.pic_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.pic_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.pic_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.pic_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.pic_table.verticalHeader().setVisible(False)
         self.pic_table.itemSelectionChanged.connect(self._on_pic_table_selection_changed)
         AddLayout.addWidget(self.pic_table)
-
-        # Ancienne liste conservée pour compatibilité interne si nécessaire
-        self.listbox_pic = QListWidget()
-        self.listbox_pic.hide()
 
         self.AddBox.setLayout(AddLayout)
         self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
