@@ -176,17 +176,15 @@ class MainWindow(
         self._spectrum_pen_mapping = {
             "curve_spec_data": "spectrum_data",
             "curve_spec_fit": "spectrum_fit",
+            "curve_spec_brut": "baseline_brut",
+            "curve_spec_blfit": "baseline_fit",
             "curve_dy": "dy",
             "line_dy_zero": "zero_line",
-            "curve_baseline_brut": "baseline_brut",
-            "curve_baseline_blfit": "baseline_fit",
-            "curve_fft": "fft",
             "curve_zoom_data": "zoom_data",
             "curve_zoom_data_brut": "zoom_data_brut",
             "vline_spec": "selection_line",
             "hline_spec": "selection_line",
             "vline_dy": "selection_line",
-            "vline_base": "selection_line",
             "vline_zoom": "selection_line",
         }
         self._spectrum_brush_mapping = {
@@ -262,25 +260,21 @@ class MainWindow(
             (
                 "pg_spec",
                 "pg_zoom",
-                "pg_baseline_preview",
-                "pg_fft",
                 "pg_dy",
                 "pg_spectrum",
                 "curve_spec_data",
                 "curve_spec_fit",
+                "curve_spec_brut",
+                "curve_spec_blfit",
                 "curve_spec_pic_select",
                 "curve_dy",
                 "line_dy_zero",
-                "curve_baseline_brut",
-                "curve_baseline_blfit",
-                "curve_fft",
                 "curve_zoom_data",
                 "curve_zoom_data_brut",
                 "curve_zoom_pic",
                 "vline_spec",
                 "hline_spec",
                 "vline_dy",
-                "vline_base",
                 "vline_zoom",
                 "cross_zoom",
                 "pg_text_label",
@@ -302,7 +296,6 @@ class MainWindow(
         self._refresh_visible_plots(
             (
                 self.pg_zoom,
-                self.pg_fft,
                 self.pg_dy,
                 self.pg_spectrum,
             ),
@@ -2135,9 +2128,9 @@ class MainWindow(
             self.Spectrum = None
             self.nb_jauges = 0
             self.list_name_gauges = []
-            self.listbox_pic.clear()
             # Vide les courbes PyQtGraph
             self._refresh_spectrum_view()
+            self._refresh_pic_table()
         else:
             if isinstance(self.Spectrum, CL.Spectre):
                 self.nb_jauges = len(self.Spectrum.Gauges)
@@ -2147,7 +2140,7 @@ class MainWindow(
                 print("gauges dell")
                 self.nb_jauges = 0
                 self.list_name_gauges = []
-                self.listbox_pic.clear()
+                self._refresh_pic_table()
 
         # Variables de fit/pics
         self.plot_fit = []
@@ -2170,6 +2163,7 @@ class MainWindow(
         self.z2 = [None for _ in range(self.nb_jauges)]
         self.Zone_fit = [None for _ in range(self.nb_jauges)]
         self.list_text_pic = [[] for _ in range(self.nb_jauges)]
+        self._refresh_pic_table()
 
         self.X0 = 0
         self.Y0 = 0
@@ -2340,7 +2334,6 @@ class MainWindow(
             self.list_text_pic[self.index_jauge].insert(i,i)
             self.list_y_fit_start[self.index_jauge].insert(i,i)
             self.plot_pic_fit[self.index_jauge].insert(i,"pic_fit")
-            self.listbox_pic.insertItem(self.J[self.index_jauge]-1,str(i))
             self.J[self.index_jauge]+=1 
             self.index_pic_select=i
             self.Param0[self.index_jauge][self.index_pic_select]=[self.X0,self.Y0,float(p.sigma[0]),np.array([float(x[0]) for x in p.coef_spe]),str(p.model_fit) ]

@@ -87,12 +87,7 @@ class SpectrumViewMixin:
 
         container_layout.addLayout(right_layout, stretch=2)
 
-        # ================== FFT (en dessous du conteneur principal) ==================
-        self.pg_fft = pg.PlotWidget()
-        self._stylize_plot(self.pg_fft, x_label='f', y_label='|F|')
-
         self._spectra_layout.addWidget(self.spectrum_container)
-        #self._spectra_layout.addWidget(self.pg_fft)
 
     def _create_persistent_curves(self) -> None:
         # ================== COURBES PERSISTANTES ==================
@@ -102,9 +97,9 @@ class SpectrumViewMixin:
         # Fit total (somme des pics)
         self.curve_spec_fit = self.pg_spectrum.plot()
 
-        # Filtres, baseline etc.
-        self.curve_baseline_brut = self.pg_spectrum.plot()
-        self.curve_baseline_blfit = self.pg_spectrum.plot()
+        # Overlay brut/baseline (affiché seulement si "Print baseline" cochée)
+        self.curve_spec_brut = self.pg_spectrum.plot()
+        self.curve_spec_blfit = self.pg_spectrum.plot()
 
         # dY
         self.curve_dy = self.pg_dy.plot()
@@ -218,7 +213,7 @@ class SpectrumViewMixin:
 
     def _configure_spectrum_layout(self) -> None:
         # ================== FACTEURS LIGNES / COLONNES ==================
-        # 3 lignes empilées (Residuals / Spectrum / Baseline preview)
+        # 2 lignes empilées (Residuals / Spectrum)
         self._spec_row_factors = (5, 1)
         # 1 colonne dans le GraphicsLayoutWidget
         self._spec_col_factors = (1,)
@@ -495,11 +490,10 @@ class SpectrumViewMixin:
     def _refresh_spectrum_view(self):
         """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
 
-        Les courbes de spectre, fit global, dérivée dY, baseline et FFT sont mises
-        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline_preview, pg_fft).
-        La fonction ajuste aussi les limites de ViewBox et met à jour l'état local
-        (drapeau d'initialisation des limites) sans modifier la logique métier du
-        calcul du spectre.
+        Les courbes de spectre, fit global, dérivée dY et overlays baseline/brut sont mises
+        à jour sur leurs plots respectifs (pg_spectrum, pg_dy). La fonction ajuste aussi les
+        limites de ViewBox et met à jour l'état local (drapeau d'initialisation des limites)
+        sans modifier la logique métier du calcul du spectre.
         """
         S = self.Spectrum
         if S is None:
@@ -507,8 +501,8 @@ class SpectrumViewMixin:
             self._update_curve_safe(self.curve_spec_data, [], [])
             self._update_curve_safe(self.curve_spec_fit, [], [])
             self._update_curve_safe(self.curve_dy, [], [])
-            self._update_curve_safe(self.curve_baseline_brut, [], [])
-            self._update_curve_safe(self.curve_baseline_blfit, [], [])
+            self._update_curve_safe(self.curve_spec_brut, [], [])
+            self._update_curve_safe(self.curve_spec_blfit, [], [])
             self._update_curve_safe(self.curve_zoom_data, [], [])
             self._update_curve_safe(self.curve_zoom_data_brut, [], [])
             self._update_curve_safe(self.curve_zoom_pic, [], [])
@@ -733,7 +727,7 @@ class SpectrumViewMixin:
 
         self._run_spectrum_task(
             _process_baseline,
-            description="Calcul baseline/FFT…",
+            description="Calcul baseline…",
             result_slot=lambda _=None: self._on_baseline_ready(),
         )
 
@@ -826,7 +820,6 @@ class SpectrumViewMixin:
             self.list_text_pic[self.index_jauge].insert(i,i)
             self.list_y_fit_start[self.index_jauge].insert(i,i)
             self.plot_pic_fit[self.index_jauge].insert(i,"pic_fit")
-            self.listbox_pic.insertItem(self.J[self.index_jauge]-1,str(i))
             self.J[self.index_jauge]+=1
             self.index_pic_select=i
             self.Param0[self.index_jauge][self.index_pic_select]=[self.X0,self.Y0,float(p.sigma[0]),np.array([float(x[0]) for x in p.coef_spe]),str(p.model_fit) ]
@@ -852,7 +845,6 @@ class SpectrumViewMixin:
         self.J[self.index_jauge]+=1
         self.text_box_msg.setText('Parametre initiale pic'+str(self.J[self.index_jauge])+': \n VIDE')
         self.list_text_pic[self.index_jauge].append(str(new_name))
-        self.listbox_pic.insertItem(self.J[self.index_jauge]-1,new_name)
 
         X_pic=CL.Pics(name=self.Nom_pic[self.index_jauge][-1],ctr=self.Param0[self.index_jauge][-1][0],ampH=self.Param0[self.index_jauge][-1][1],coef_spe=self.Param0[self.index_jauge][-1][3],sigma=self.Param0[self.index_jauge][-1][2],model_fit=self.Param0[self.index_jauge][-1][4])
         params=X_pic.model.make_params()
@@ -871,7 +863,10 @@ class SpectrumViewMixin:
             )
         )
         self.Spectrum.Gauges[self.index_jauge].pics.append(X_pic)
+        self.index_pic_select = self.J[self.index_jauge] - 1
         self._refresh_pic_table()
+        self._sync_pic_table_selection(self.index_pic_select)
+        self.select_pic()
 
     def _recompute_y_fit_start(self):
         """Recale self.y_fit_start à partir de list_y_fit_start."""
@@ -893,11 +888,13 @@ class SpectrumViewMixin:
 
         if not hasattr(self, "Param0") or not hasattr(self, "Nom_pic"):
             table.setRowCount(0)
+            self.index_pic_select = -1
             return
 
         gauge_index = getattr(self, "index_jauge", -1)
         if gauge_index is None or gauge_index < 0:
             table.setRowCount(0)
+            self.index_pic_select = -1
             return
 
         params_list = self.Param0[gauge_index] if gauge_index < len(self.Param0) else []
@@ -910,13 +907,15 @@ class SpectrumViewMixin:
         self._refreshing_pic_table = True
         try:
             table.setRowCount(len(params_list))
+            table.setColumnCount(6)
+            table.setHorizontalHeaderLabels(["name", "X0", "Y0", "sigma", "coef_spe", "modele"])
 
             def _fmt_number(value):
                 if value is None:
                     return ""
                 if isinstance(value, (list, tuple, np.ndarray)):
                     arr = np.asarray(value).ravel()
-                    return ", ".join(f"{v:.4g}" for v in arr)
+                    return ",".join(f"{v:.4g}" for v in arr)
                 try:
                     return f"{float(value):.4g}"
                 except Exception:
@@ -967,6 +966,9 @@ class SpectrumViewMixin:
 
         selected_rows = table.selectionModel().selectedRows()
         if not selected_rows:
+            self.index_pic_select = -1
+            self._clear_selected_peak_overlay()
+            self._update_fit_window()
             return
 
         self.index_pic_select = selected_rows[0].row()
@@ -989,60 +991,69 @@ class SpectrumViewMixin:
         self._refresh_spectrum_view()
 
     def Undo_pic(self):
-        if self.J[self.index_jauge] >0:
-            del(self.Nom_pic[self.index_jauge][-1])
-            del(self.Param0[self.index_jauge][-1])
-            del(self.Spectrum.Gauges[self.index_jauge].pics[-1])
-            self.text_box_msg.setText('Parametre initiale pic'+str(self.J[self.index_jauge])+': \n VIDE')
-            del(self.list_text_pic[self.index_jauge][-1])
-            self.J[self.index_jauge]-=1
-            self.listbox_pic.takeItem(self.J[self.index_jauge])
-            try:
-                self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][-1])
-            except Exception:
-                pass
-            del(self.plot_pic_fit[self.index_jauge][-1])
-            self.text_box_msg.setText('UNDO PIC')
-            del(self.list_y_fit_start[self.index_jauge][-1])
-            self.index_pic_select = self.J[self.index_jauge] - 1
-            self.Print_fit_start()
-            self._refresh_pic_table()
+        if (
+            self.index_jauge is None
+            or self.index_jauge < 0
+            or self.index_jauge >= len(self.J)
+            or self.J[self.index_jauge] <= 0
+        ):
+            return
+
+        del self.Nom_pic[self.index_jauge][-1]
+        del self.Param0[self.index_jauge][-1]
+        del self.Spectrum.Gauges[self.index_jauge].pics[-1]
+        self.text_box_msg.setText('Parametre initiale pic'+str(self.J[self.index_jauge])+': \n VIDE')
+        del self.list_text_pic[self.index_jauge][-1]
+        self.J[self.index_jauge] -= 1
+        try:
+            self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][-1])
+        except Exception:
+            pass
+        del self.plot_pic_fit[self.index_jauge][-1]
+        self.text_box_msg.setText('UNDO PIC')
+        del self.list_y_fit_start[self.index_jauge][-1]
+        self.index_pic_select = self.J[self.index_jauge] - 1
+        self.Print_fit_start()
+        self._refresh_pic_table()
+        self.select_pic()
 
     def Undo_pic_select(self):
-        if self.index_pic_select is not None:
-            name=self.listbox_pic.item(self.index_pic_select).text()
-            #motif = r'_p(\d+)_'(continued)
-            #matches = re.findall(motif, name)
-            #self.index_pic_select=int(matches[0])
-            if self.J[self.index_jauge] >0:
-                self.text_box_msg.setText('PIC'+ self.Nom_pic[self.index_jauge][self.index_pic_select] +' DELETED')
-                del(self.Nom_pic[self.index_jauge][self.index_pic_select])
-                del(self.Param0[self.index_jauge][self.index_pic_select])
-                self.text_box_msg.setText('PIC'+str(self.J[self.index_jauge])+': \n VIDE')
-                del(self.list_text_pic[self.index_jauge][self.index_pic_select])
-                self.J[self.index_jauge]-=1
-                self.listbox_pic.takeItem(self.index_pic_select)
-                try:
-                    self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
-                except Exception:
-                    pass
-                del(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
-                del(self.list_y_fit_start[self.index_jauge][self.index_pic_select])
-                del(self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select])
-                self.index_pic_select = min(self.index_pic_select, self.J[self.index_jauge] - 1)
-                self.Print_fit_start()
-                self._refresh_pic_table()
+        if (
+            self.index_pic_select is None
+            or self.index_pic_select < 0
+            or self.index_jauge is None
+            or self.index_jauge < 0
+            or self.index_jauge >= len(self.J)
+            or self.J[self.index_jauge] <= 0
+        ):
+            return
+
+        self.text_box_msg.setText('PIC'+ self.Nom_pic[self.index_jauge][self.index_pic_select] +' DELETED')
+        del self.Nom_pic[self.index_jauge][self.index_pic_select]
+        del self.Param0[self.index_jauge][self.index_pic_select]
+        self.text_box_msg.setText('PIC'+str(self.J[self.index_jauge])+': \n VIDE')
+        del self.list_text_pic[self.index_jauge][self.index_pic_select]
+        self.J[self.index_jauge] -= 1
+        try:
+            self.pg_spectrum.removeItem(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
+        except Exception:
+            pass
+        del self.plot_pic_fit[self.index_jauge][self.index_pic_select]
+        del self.list_y_fit_start[self.index_jauge][self.index_pic_select]
+        del self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select]
+        self.index_pic_select = min(self.index_pic_select, self.J[self.index_jauge] - 1)
+        self.Print_fit_start()
+        self._refresh_pic_table()
+        self.select_pic()
     
     def select_pic(self):
         if not self.bit_bypass:
-            if hasattr(self, "pic_table") and self.pic_table is not None:
-                selected_rows = self.pic_table.selectionModel().selectedRows()
+            table = getattr(self, "pic_table", None)
+            if table is not None and table.selectionModel() is not None:
+                selected_rows = table.selectionModel().selectedRows()
                 self.index_pic_select = selected_rows[0].row() if selected_rows else -1
-            elif hasattr(self, "listbox_pic"):
-                self.index_pic_select = self.listbox_pic.currentRow()
-            if self.index_pic_select is None or self.index_pic_select < 0:
-                return
 
+        S = getattr(self, "Spectrum", None)
         if (
             self.index_jauge is None
             or self.index_jauge < 0
@@ -1050,7 +1061,18 @@ class SpectrumViewMixin:
             or self.index_pic_select is None
             or self.index_pic_select < 0
             or self.index_pic_select >= len(self.Param0[self.index_jauge])
+            or S is None
         ):
+            self._clear_selected_peak_overlay()
+            if S is not None and hasattr(S, "wnb") and hasattr(S, "spec"):
+                blfit = getattr(S, "blfit", 0)
+                self._update_curve_safe(self.curve_zoom_data, S.wnb, S.spec - (blfit if blfit is not None else 0))
+                self._update_curve_safe(self.curve_zoom_data_brut, S.wnb, S.spec)
+            else:
+                self._update_curve_safe(self.curve_zoom_data, [], [])
+                self._update_curve_safe(self.curve_zoom_data_brut, [], [])
+            self._sync_pic_table_selection(self.index_pic_select)
+            self._update_fit_window()
             return
 
         # Mise à jour X0/Y0
@@ -1079,8 +1101,6 @@ class SpectrumViewMixin:
         )
 
         # ------------- Données de zoom & pic sélectionné -------------
-        S = self.Spectrum
-
         y_pic = None
 
         if (
@@ -1224,8 +1244,6 @@ class SpectrumViewMixin:
             + str(self.Param0[self.index_jauge][self.index_pic_select][4])
         )
         self.list_text_pic[self.index_jauge][self.index_pic_select] = str(new_name)
-        self.listbox_pic.takeItem(self.index_pic_select)
-        self.listbox_pic.insertItem(self.index_pic_select, str(new_name))
         self.text_box_msg.setText(
             "PIC " + self.Nom_pic[self.index_jauge][self.index_pic_select] + " REPLACE"
         )
@@ -1325,8 +1343,6 @@ class SpectrumViewMixin:
             + str(self.Param0[self.index_jauge][self.index_pic_select][4])
         )
         self.list_text_pic[self.index_jauge][self.index_pic_select] = str(new_name)
-        self.listbox_pic.takeItem(self.index_pic_select)
-        self.listbox_pic.insertItem(self.index_pic_select, str(new_name))
         self.text_box_msg.setText(
             "PIC FIT " + self.Nom_pic[self.index_jauge][self.index_pic_select] + " REPLACE"
         )
@@ -1530,7 +1546,6 @@ class SpectrumViewMixin:
             self.Baseline_spectrum()
 
             # Mise à jour UI jauge/pics
-            self.listbox_pic.clear()
             if getattr(S, "Gauges", None):
                 self.index_jauge = 0
                 if self.list_name_gauges:
@@ -1543,6 +1558,7 @@ class SpectrumViewMixin:
                 self.LOAD_Gauge()
             else:
                 self.index_jauge = -1
+                self._refresh_pic_table()
     
     def f_index_gauge(self,spec):
         l_name = [ga.name for ga in spec.Gauges]
@@ -1576,10 +1592,6 @@ class SpectrumViewMixin:
 
         self.f_dell_lines()
         self.f_p_move(G, value=G.P)
-
-        self.listbox_pic.clear()
-        for name in self.list_text_pic[self.index_jauge]:
-            self.listbox_pic.addItem(name)
 
         self.Gauge_type_selector.setCurrentIndex(
             self.liste_type_Gauge.index(G.name)
