@@ -126,7 +126,7 @@ class MainWindow(
         self._build_ui()
         self._connect_main_signals()
         self._initialize_data()
-
+        
         if Setup_mode is True:
             self._run_setup_mode()
             print("setup mode RUN")
@@ -432,11 +432,11 @@ class MainWindow(
 
             # retirer puis replacer pour être sûr
             self.grid_layout.removeWidget(self.SpectraBox)
-            self.grid_layout.removeWidget(self.AddBox)
+            #self.grid_layout.removeWidget(self.AddBox)
             self.grid_layout.removeWidget(self.promptBox)
 
-            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 1, 1)
-            self.grid_layout.addWidget(self.AddBox,     1, 2, 1, 1)
+            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
+            #self.grid_layout.addWidget(self.AddBox,     1, 2, 1, 1)
             self.grid_layout.addWidget(self.promptBox,  2, 2, 1, 1)
 
         else:
@@ -445,11 +445,11 @@ class MainWindow(
             self.promptBox.hide()
 
             self.grid_layout.removeWidget(self.SpectraBox)
-            self.grid_layout.removeWidget(self.AddBox)
+            #self.grid_layout.removeWidget(self.AddBox)
             # promptBox peut rester dans la grille mais caché
 
-            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
-            self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
+            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 3, 1)
+            #self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
 
     # ==================================================================
     # ===============   SETUP MODE POUR DEBUG  =========================
@@ -608,6 +608,8 @@ class MainWindow(
             return self.toggle_colonne, None, False, False
         if key == Qt.Key_Z:
             return lambda: self.toggle_cam_region(), None, False, False
+        if key == Qt.Key_I:
+            return lambda: self.toggle_fit_region(), None, False, False
         if key == Qt.Key_O and modifiers & Qt.ShiftModifier:
             return self.Dell_Jauge, None, False, False
         if key == Qt.Key_R:
@@ -623,6 +625,7 @@ class MainWindow(
         if key == Qt.Key_0:
             return self.f_lambda0, None, False, False
 
+        
         return None
 
     def _dispatch_key_action(self, action):
@@ -736,8 +739,10 @@ class MainWindow(
     def toggle_colonne(self):
         if self.is_reduced_column_mode:
             self.grid_layout.setColumnStretch(2, 5)
+            self.grid_layout.setColumnStretch(3, 5)
         else:
             self.grid_layout.setColumnStretch(2, 0)
+            self.grid_layout.setColumnStretch(3, 10)
         self.is_reduced_column_mode = not self.is_reduced_column_mode  # Inverser l'état
 
     def try_command(self,item):
@@ -1959,9 +1964,6 @@ class MainWindow(
             index=None
             self.Gauge_type_selector.setCurrentIndex(l_name.index(self.Gauge_type_selector.currentText()))
         return index
-    
-    def LOAD_Gauge(self):
-        return super().LOAD_Gauge()
 
     def ADD_gauge(self): # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ADD JAUGE - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
         new_g=self.Gauge_type_selector.currentText()
@@ -2345,9 +2347,6 @@ class MainWindow(
         self.Spectrum.Gauges[self.index_jauge].bit_fit =False
         self.select_pic()
             
-    def Click_Confirme(self): # Fonction qui confirme le choix du pic et qui passe au suivant
-        return super().Click_Confirme()
-
     def Click_Zone(self):
         """Définit / efface la zone de fit pour la jauge courante, sans tracés Matplotlib."""
         if self.index_jauge == -1 or self.Spectrum is None:
@@ -2404,24 +2403,6 @@ class MainWindow(
 
         self.Baseline_spectrum()
         self.text_box_msg.setText("Zone Clear")
-
-    def Click_Clear(self):
-        return super().Click_Clear()
-
-    def _recompute_y_fit_start(self):
-        return super()._recompute_y_fit_start()
-
-    def Print_fit_start(self):
-        return super().Print_fit_start()
-
-    def Undo_pic(self):
-        return super().Undo_pic()
-    
-    def Undo_pic_select(self):
-        return super().Undo_pic_select()
-                
-    def select_pic(self):
-        return super().select_pic()
 
     def f_pic_fit(self):
         n_sigma = int(self.sigma_pic_fit_entry.value())
@@ -2495,15 +2476,6 @@ class MainWindow(
             self.curve_zoom_pic.setData([], [])
         except Exception:
             pass
-
-    def Replace_pic_fit(self):
-        return super().Replace_pic_fit()
-
-
-    def Replace_pic(self):
-        return super().Replace_pic()
-        
-
         
 
     def _CED_multi_fit(self):

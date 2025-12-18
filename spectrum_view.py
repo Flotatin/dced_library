@@ -58,12 +58,11 @@ class SpectrumViewMixin:
             x_label='X (U.A)',
             y_label='Y (U.A)',
         )
-        self.pg_spectrum.setTitle("Spectrum main")
+        self.pg_spectrum.setTitle("Spectrum")
         self.pg_spectrum.hideAxis('bottom')
 
         # Résidus / dY (en haut)
         self.pg_dy = self._add_spec_plot(row=1, col=0)
-        self.pg_dy.setTitle("Residuals / dY")
         self.pg_dy.setXLink(self.pg_spectrum)
         container_layout.addWidget(self.pg_spec, stretch=3)
 
@@ -411,9 +410,8 @@ class SpectrumViewMixin:
             vb = self.pg_zoom.getViewBox()
         elif clicked_on_spec:
             vb = self.pg_spectrum.getViewBox()
-        elif clicked_on_dy:
+        else: #elif clicked_on_dy:
             vb = self.pg_dy.getViewBox()
-
 
         mouse_point = vb.mapSceneToView(pos)
         x = mouse_point.x()

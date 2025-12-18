@@ -94,12 +94,18 @@ class DdacViewMixin:
         self.pg_ddac = pg.GraphicsLayoutWidget()
 
         # Col 0 : P, dP/dt/T, sigma
-        self.pg_P = self._add_ddac_plot(row=0, col=0, x_label='Time (s)', y_label='P (GPa)')
+        self.pg_P = self._add_ddac_plot(row=0, col=0, y_label='P (GPa)')
 
-        self.pg_dPdt = self._add_ddac_plot(row=1, col=0, x_label='Time (s)', y_label='dP/dt (GPa/ms), T (K)')
+        self.pg_dPdt = self._add_ddac_plot(row=1, col=0, y_label='dP/dt (GPa/ms), T (K)')
 
         self.pg_sigma = self._add_ddac_plot(row=2, col=0, x_label='Time (s)', y_label='sigma (nm)')
 
+
+        self.pg_dPdt.setXLink(self.pg_P)
+
+        self.pg_sigma.setXLink(self.pg_P)
+
+        
         # Col 1 : IMAGE + Δλ
         self.pg_movie = self._add_ddac_plot(row=0, col=1, show_grid=False)
         self.pg_movie.setAspectLocked(True)
