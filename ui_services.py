@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 
 import pyqtgraph as pg
 from PyQt5.QtCore import QThreadPool, QTimer, Qt
@@ -20,7 +20,9 @@ class ThemeMixin:
     # -----------------------------
     # Gestion du thème / palette Qt
     # -----------------------------
-    def _get_theme_resources(self, name: Optional[str] = None):
+    def _get_theme_resources(self, name: Optional[str] = None) -> Dict[str, Any]:
+        """Récupère (ou construit) les ressources mises en cache pour un thème."""
+
         if name is None:
             name = getattr(self, "current_theme", "dark")
 
@@ -184,10 +186,6 @@ class ThemeMixin:
                 continue
             self._apply_plot_item_theme(plot, theme)
 
-    def _refresh_visible_lists(self, lists_of_plots, theme):
-        for plot_list in lists_of_plots:
-            self._refresh_visible_plots(plot_list, theme)
-
     def _apply_theme(self, theme_name: str):
         self.current_theme = theme_name if theme_name in THEMES else "dark"
         theme = self._get_theme(self.current_theme)
@@ -249,7 +247,9 @@ class BackgroundTaskMixin:
         self._disabled_widgets = []
         self._task_watchdogs = {}
 
-    def _task_widgets_default(self):
+    def _task_widgets_default(self) -> List[Any]:
+        """Widgets désactivés pendant l'exécution d'une tâche en arrière-plan."""
+
         return [
             getattr(self, "previous_button", None),
             getattr(self, "play_stop_button", None),
@@ -324,6 +324,8 @@ class BackgroundTaskMixin:
 
 class RunStateMixin:
     def _init_run_state(self) -> None:
-        self.runs = {}
-        self.current_run_id = None
-        self.file_index_map = {}
+        """Initialise l'état partagé entre les vues Spectrum et dDAC."""
+
+        self.runs: Dict[str, Any] = {}
+        self.current_run_id: Optional[str] = None
+        self.file_index_map: Dict[str, int] = {}

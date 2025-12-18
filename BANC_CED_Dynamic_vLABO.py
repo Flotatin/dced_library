@@ -416,13 +416,6 @@ class MainWindow(
             scatter.setZValue(z_value)
         return scatter
 
-    def _get_run_id(self, ced):
-        """Retourne une clé stable pour un CEDd donné."""
-
-        if hasattr(ced, "CEDd_path") and ced.CEDd_path:
-            return ced.CEDd_path
-        return f"memory_{id(ced)}"
-
     def toggle_python_kernel(self, checked: bool):
         """
         Affiche/cache le kernel Python et réarrange la grille :
