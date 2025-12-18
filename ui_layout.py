@@ -138,17 +138,11 @@ class UiLayoutMixin:
         self.deg_baseline_entry.setValue(1)
         layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
 
+
         self.baseline_preview_checkbox = QCheckBox("Print baseline")
         self.baseline_preview_checkbox.setChecked(False)
-        self.baseline_preview_checkbox.toggled.connect(self._set_baseline_preview_visible)
+        self.baseline_preview_checkbox.stateChanged.connect(self._on_print_baseline_toggled)
         layout.addWidget(self.baseline_preview_checkbox)
-
-        """layh = QHBoxLayout()
-        self.deg_baseline_auto = QCheckBox("Auto")
-        self.deg_baseline_auto.setChecked(True)
-        self.deg_baseline_auto.stateChanged.connect(self.f_auto_deg_baseline)
-        layh.addWidget(self.deg_baseline_auto)
-        layout.addLayout(layh)"""
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -626,6 +620,7 @@ class UiLayoutMixin:
         self.listbox_pic.hide()
 
         self.AddBox.setLayout(AddLayout)
+        self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
         self.bit_modif_PTlambda = False
 
         if hasattr(self, "_spectrum_right_layout"):

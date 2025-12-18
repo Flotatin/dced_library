@@ -302,7 +302,6 @@ class MainWindow(
         self._refresh_visible_plots(
             (
                 self.pg_zoom,
-                self.pg_baseline_preview,
                 self.pg_fft,
                 self.pg_dy,
                 self.pg_spectrum,
