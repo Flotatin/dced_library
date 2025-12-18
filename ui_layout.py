@@ -4,12 +4,14 @@ import pyqtgraph as pg
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -19,6 +21,8 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QTabWidget,
     QTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -133,6 +137,11 @@ class UiLayoutMixin:
         self.deg_baseline_entry.setSingleStep(1)
         self.deg_baseline_entry.setValue(1)
         layout.addLayout(creat_spin_label(self.deg_baseline_entry, "°Poly basline"))
+
+        self.baseline_preview_checkbox = QCheckBox("Print baseline")
+        self.baseline_preview_checkbox.setChecked(False)
+        self.baseline_preview_checkbox.toggled.connect(self._set_baseline_preview_visible)
+        layout.addWidget(self.baseline_preview_checkbox)
 
         """layh = QHBoxLayout()
         self.deg_baseline_auto = QCheckBox("Auto")
@@ -603,13 +612,24 @@ class UiLayoutMixin:
 
         AddLayout.addLayout(layh4)
 
+        self.pic_table = QTableWidget(0, 6)
+        self.pic_table.setHorizontalHeaderLabels(["name", "X0", "Y0", "sigma", "coef_spe", "modele"])
+        self.pic_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.pic_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.pic_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.pic_table.verticalHeader().setVisible(False)
+        self.pic_table.itemSelectionChanged.connect(self._on_pic_table_selection_changed)
+        AddLayout.addWidget(self.pic_table)
+
+        # Ancienne liste conservée pour compatibilité interne si nécessaire
         self.listbox_pic = QListWidget()
-        self.listbox_pic.doubleClicked.connect(self.select_pic)
-        AddLayout.addWidget(self.listbox_pic)
+        self.listbox_pic.hide()
 
         self.AddBox.setLayout(AddLayout)
-        self.grid_layout.addWidget(self.AddBox, 2, 2, 1, 1)
         self.bit_modif_PTlambda = False
+
+        if hasattr(self, "_spectrum_right_layout"):
+            self._spectrum_right_layout.insertWidget(0, self.AddBox)
 
 
 """

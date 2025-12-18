@@ -217,7 +217,7 @@ class ThemeMixin:
 
         for plot in (
             getattr(self, "pg_zoom", None),
-            getattr(self, "pg_baseline", None),
+            getattr(self, "pg_baseline_preview", None),
             getattr(self, "pg_fft", None),
             getattr(self, "pg_dy", None),
             getattr(self, "pg_spectrum", None),

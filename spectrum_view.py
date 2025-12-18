@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QVBoxLayout
+from PyQt5.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QTableWidgetItem, QVBoxLayout, QWidget
 
 from Bibli_python import CL_FD_Update as CL
 
@@ -40,42 +40,66 @@ class SpectrumViewMixin:
 
         self._spectra_layout = SpectraBoxFirstLayout
 
-        # ================== WIDGET PyQtGraph ==================
+        # Conteneur principal : colonne gauche (plots) + colonne droite (infos jauge + zoom)
+        self.spectrum_container = QWidget()
+        container_layout = QHBoxLayout(self.spectrum_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(6)
+
+        # ================== WIDGET PyQtGraph (colonne gauche) ==================
         self.pg_spec = pg.GraphicsLayoutWidget()
 
-        # ---- Layout 3x2 : (zoom / baseline / FFT) x (spectrum / dY) ----
-        # Row 0, Col 0 : ZOOM
-        self.pg_zoom = self._add_spec_plot(row=0, col=0, show_grid=False)
-        self.pg_zoom.hideAxis('bottom')
-        self.pg_zoom.hideAxis('left')
-
-        # Row 1, Col 0 : BASELINE
-        y_axis_base_sci = SciAxis(orientation='left')
-        self.pg_baseline = self._add_spec_plot(
-            row=1,
-            col=0,
-            axisItems={'left': y_axis_base_sci},
-            x_label='X',
-            y_label='Intensity',
-        )
-
-
-        # Row 2, Col 0 : FFT
-        self.pg_fft = self._add_spec_plot(row=2, col=0, x_label='f', y_label='|F|')
-
-        # Row 2, Col 1 : dY
-        self.pg_dy = self._add_spec_plot(row=2, col=1, x_label='X', y_label='dY')
-
-        # Row 0–1, Col 1 : SPECTRUM
+        # Plot principal (au centre)
         y_axis_sci = SciAxis(orientation='left')
         self.pg_spectrum = self._add_spec_plot(
-            row=0,
-            col=1,
-            rowspan=2,
+            row=1,
+            col=0,
             axisItems={'left': y_axis_sci},
             x_label='X (U.A)',
             y_label='Y (U.A)',
         )
+        self.pg_spectrum.setTitle("Spectrum main")
+        self.pg_spectrum.hideAxis('bottom')
+
+        # Résidus / dY (en haut)
+        self.pg_dy = self._add_spec_plot(row=0, col=0, y_label='Residuals / dY')
+        self.pg_dy.setTitle("Residuals / dY")
+        self.pg_dy.setXLink(self.pg_spectrum)
+        self.pg_dy.hideAxis('bottom')
+
+        # Aperçu baseline (en bas)
+        self.pg_baseline_preview = self._add_spec_plot(row=2, col=0, x_label='X', y_label='Intensity')
+        self.pg_baseline_preview.setTitle("Baseline preview")
+        self.pg_baseline_preview.setXLink(self.pg_spectrum)
+
+        container_layout.addWidget(self.pg_spec, stretch=3)
+
+        # ================== Colonne droite : AddBox + Zoom ==================
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+        self._spectrum_right_layout = right_layout
+
+        zoom_index = 0
+        if hasattr(self, "AddBox"):
+            right_layout.addWidget(self.AddBox)
+            zoom_index = 1
+
+        self.pg_zoom = pg.PlotWidget()
+        self._stylize_plot(self.pg_zoom, show_grid=False)
+        self.pg_zoom.hideAxis('bottom')
+        self.pg_zoom.hideAxis('left')
+        right_layout.addWidget(self.pg_zoom)
+        right_layout.setStretch(zoom_index, 1)
+
+        container_layout.addLayout(right_layout, stretch=2)
+
+        # ================== FFT (en dessous du conteneur principal) ==================
+        self.pg_fft = pg.PlotWidget()
+        self._stylize_plot(self.pg_fft, x_label='f', y_label='|F|')
+
+        self._spectra_layout.addWidget(self.spectrum_container)
+        self._spectra_layout.addWidget(self.pg_fft)
 
     def _create_persistent_curves(self) -> None:
         # ================== COURBES PERSISTANTES ==================
@@ -86,8 +110,8 @@ class SpectrumViewMixin:
         self.curve_spec_fit = self.pg_spectrum.plot()
 
         # Filtres, baseline etc.
-        self.curve_baseline_brut = self.pg_baseline.plot()
-        self.curve_baseline_blfit = self.pg_baseline.plot()
+        self.curve_baseline_brut = self.pg_baseline_preview.plot()
+        self.curve_baseline_blfit = self.pg_baseline_preview.plot()
         self.curve_fft = self.pg_fft.plot()
 
         # dY
@@ -104,10 +128,19 @@ class SpectrumViewMixin:
 
     def _create_selection_items(self) -> None:
         # Sélections verticales/horizontales
-        self.vline = self._create_marker_line(angle=90)
-        self.hline = self._create_marker_line(angle=0)
-        self.pg_spectrum.addItem(self.vline)
-        self.pg_spectrum.addItem(self.hline)
+        self.vline_spec = self._create_marker_line(angle=90)
+        self.hline_spec = self._create_marker_line(angle=0)
+        self.pg_spectrum.addItem(self.vline_spec)
+        self.pg_spectrum.addItem(self.hline_spec)
+
+        self.vline_dy = self._create_marker_line(angle=90)
+        self.pg_dy.addItem(self.vline_dy)
+
+        self.vline_base = self._create_marker_line(angle=90)
+        self.pg_baseline_preview.addItem(self.vline_base)
+
+        self.vline_zoom = self._create_marker_line(angle=90)
+        self.pg_zoom.addItem(self.vline_zoom)
 
         # Pour le zoom : on met une petite croix
         self.cross_zoom = self._create_scatter_marker(symbol='+')
@@ -160,10 +193,10 @@ class SpectrumViewMixin:
         self.bit_filtre: bool = False
         """Indique qu'un filtre de spectre est actif pour le tracé courant."""
 
+        self._refreshing_pic_table: bool = False
+
     def _build_spectrum_controls(self) -> None:
         # ================== INTÉGRATION UI ==================
-        self._spectra_layout.addWidget(self.pg_spec)
-
         layout_check = QHBoxLayout()
         self.select_clic_box = QCheckBox("Select clic pic (q)", self)
         self.select_clic_box.setChecked(True)
@@ -190,14 +223,16 @@ class SpectrumViewMixin:
         # clic sur le spectre principal
         self.pg_spectrum.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         self.pg_zoom.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        self.pg_dy.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
+        self.pg_baseline_preview.scene().sigMouseClicked.connect(self._on_pg_spectrum_click)
         # tu peux aussi connecter sigMouseMoved si tu veux un "hover" au lieu de clic
 
     def _configure_spectrum_layout(self) -> None:
         # ================== FACTEURS LIGNES / COLONNES ==================
-        # 3 lignes : (2, 2, 1)  -> les 2 premières 2x plus grandes que la 3ème
-        self._spec_row_factors = (3, 2, 1)
-        # 2 colonnes : par exemple 30% (col 0) / 70% (col 1)
-        self._spec_col_factors = (1, 2)
+        # 3 lignes empilées (Residuals / Spectrum / Baseline preview)
+        self._spec_row_factors = (2, 3, 1)
+        # 1 colonne dans le GraphicsLayoutWidget
+        self._spec_col_factors = (1,)
 
         # premier ajustement immédiat
         self._update_graphicslayout_sizes(
@@ -205,6 +240,40 @@ class SpectrumViewMixin:
             row_factors=self._spec_row_factors,
             col_factors=self._spec_col_factors,
         )
+
+        # Baseline preview visible ou non selon la checkbox (si elle existe)
+        initial_visible = getattr(self, "baseline_preview_checkbox", None)
+        if initial_visible is not None:
+            self._set_baseline_preview_visible(bool(self.baseline_preview_checkbox.isChecked()))
+        else:
+            self._set_baseline_preview_visible(True)
+
+    def _is_baseline_preview_visible(self) -> bool:
+        plot = getattr(self, "pg_baseline_preview", None)
+        if plot is None:
+            return False
+        return plot.isVisible()
+
+    def _set_baseline_preview_visible(self, visible: bool):
+        """Affiche/masque le plot d’aperçu de baseline sans recalcul métier."""
+
+        plot = getattr(self, "pg_baseline_preview", None)
+        if plot is None:
+            return
+
+        plot.setVisible(bool(visible))
+        if hasattr(self, "vline_base") and self.vline_base is not None:
+            self.vline_base.setVisible(bool(visible))
+
+        # Si la checkbox existe, on synchronise son état sans reboucler
+        checkbox = getattr(self, "baseline_preview_checkbox", None)
+        if checkbox is not None and checkbox.isChecked() != bool(visible):
+            was_blocked = checkbox.blockSignals(True)
+            checkbox.setChecked(bool(visible))
+            checkbox.blockSignals(was_blocked)
+
+        # Rafraîchit l'affichage pour refléter l'état courant
+        self._refresh_spectrum_view()
 
     # -----------------------------
     # Helpers de rafraîchissement
@@ -372,14 +441,20 @@ class SpectrumViewMixin:
         # --- déterminer sur quel plot on a cliqué ---
         clicked_on_spec = self.pg_spectrum.sceneBoundingRect().contains(pos)
         clicked_on_zoom = self.pg_zoom.sceneBoundingRect().contains(pos)
+        clicked_on_dy = self.pg_dy.sceneBoundingRect().contains(pos)
+        clicked_on_baseline = self.pg_baseline_preview.sceneBoundingRect().contains(pos)
 
-        if not (clicked_on_spec or clicked_on_zoom):
+        if not (clicked_on_spec or clicked_on_zoom or clicked_on_dy or clicked_on_baseline):
             return
 
-        if clicked_on_spec:
-            vb = self.pg_spectrum.getViewBox()
-        else:  # clicked_on_zoom
+        if clicked_on_zoom:
             vb = self.pg_zoom.getViewBox()
+        elif clicked_on_spec:
+            vb = self.pg_spectrum.getViewBox()
+        elif clicked_on_dy:
+            vb = self.pg_dy.getViewBox()
+        else:
+            vb = self.pg_baseline_preview.getViewBox()
 
         mouse_point = vb.mapSceneToView(pos)
         x = mouse_point.x()
@@ -387,8 +462,12 @@ class SpectrumViewMixin:
 
         # Conversion scène -> axes du plot : x = position spectrale, y = intensité
         self.X0, self.Y0 = x, y
-        self.vline.setPos(x)
-        self.hline.setPos(y)
+        self.vline_spec.setPos(x)
+        self.vline_dy.setPos(x)
+        self.vline_base.setPos(x)
+        self.vline_zoom.setPos(x)
+        if clicked_on_spec or clicked_on_zoom:
+            self.hline_spec.setPos(y)
         self._update_curve_safe(self.cross_zoom, [x], [y])
 
         # Si tu veux garder la logique "clic = sélectionner/placer un pic"
@@ -454,7 +533,7 @@ class SpectrumViewMixin:
         """Rafraîchit l'ensemble des vues spectrales PyQtGraph à partir du spectre courant.
 
         Les courbes de spectre, fit global, dérivée dY, baseline et FFT sont mises
-        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline, pg_fft).
+        à jour sur leurs plots respectifs (pg_spectrum, pg_dy, pg_baseline_preview, pg_fft).
         La fonction ajuste aussi les limites de ViewBox et met à jour l'état local
         (drapeau d'initialisation des limites) sans modifier la logique métier du
         calcul du spectre.
@@ -522,22 +601,28 @@ class SpectrumViewMixin:
         else:
             self._update_curve_safe(self.curve_dy, [], [])
 
-        # 4) Baseline : brut + blfit
-        if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
-            self._update_curve_safe(self.curve_baseline_brut, S.wnb, S.spec)
+        # 4) Baseline preview : brut + blfit (uniquement si visible)
+        if self._is_baseline_preview_visible():
+            if hasattr(S, "wnb") and hasattr(S, "spec") and S.wnb is not None and S.spec is not None:
+                self._update_curve_safe(self.curve_baseline_brut, S.wnb, S.spec)
 
-            # limites du graphe brut : X et Y du brut
-            vb_base = self.pg_baseline.getViewBox()
-            self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
+                vb_base = self.pg_baseline_preview.getViewBox()
+                self._set_viewbox_limits_from_data(vb_base, S.wnb, S.spec, padding=0.02)
+                wnb_array = np.asarray(S.wnb)
+                if wnb_array.size > 0:
+                    self.pg_baseline_preview.setLimits(xMin=float(wnb_array[0]), xMax=float(wnb_array[-1]))
+            else:
+                self._update_curve_safe(self.curve_baseline_brut, [], [])
+
+            if hasattr(S, "blfit") and S.blfit is not None:
+                if getattr(S, "indexX", None) is not None:
+                    self._update_curve_safe(self.curve_baseline_blfit, S.wnb[S.indexX], S.blfit[S.indexX])
+                else:
+                    self._update_curve_safe(self.curve_baseline_blfit, S.wnb, S.blfit)
+            else:
+                self._update_curve_safe(self.curve_baseline_blfit, [], [])
         else:
             self._update_curve_safe(self.curve_baseline_brut, [], [])
-
-        if hasattr(S, "blfit") and S.blfit is not None:
-            if getattr(S, "indexX", None) is not None:
-                self._update_curve_safe(self.curve_baseline_blfit, S.wnb[S.indexX], S.blfit[S.indexX])
-            else:
-                self._update_curve_safe(self.curve_baseline_blfit, S.wnb, S.blfit)
-        else:
             self._update_curve_safe(self.curve_baseline_blfit, [], [])
 
         # 5) FFT : même X que le spectre, mais limites Y = amplitude FFT
@@ -574,7 +659,9 @@ class SpectrumViewMixin:
             vb_dy = self.pg_dy.getViewBox()
             # même astuce : x_data = x_spec, y_data = dY
             self._set_viewbox_limits_from_data(vb_dy, x_spec, S.dY, padding=0.02)
-            self.pg_dy.setLimits(xMin=x_spec[0], xMax=x_spec[-1])
+            x_spec_array = np.asarray(x_spec)
+            if x_spec_array.size > 0:
+                self.pg_dy.setLimits(xMin=float(x_spec_array[0]), xMax=float(x_spec_array[-1]))
 
     def _set_viewbox_limits_from_data(self, vb, x_data, y_data=None, padding=0.02):
         """Contraint les limites d'un ViewBox en fonction des données visibles.
@@ -851,6 +938,7 @@ class SpectrumViewMixin:
             )
         )
         self.Spectrum.Gauges[self.index_jauge].pics.append(X_pic)
+        self._refresh_pic_table()
 
     def Click_Zone(self):
         """Définit / efface la zone de fit pour la jauge courante, sans tracés Matplotlib."""
@@ -945,6 +1033,8 @@ class SpectrumViewMixin:
         self.listbox_pic.clear()
         self.text_box_msg.setText("GL&HF")
 
+        self._refresh_pic_table()
+
         # Filtre éventuel
         if self.bit_filtre and hasattr(self, "filtre_OFF"):
             self.filtre_OFF()
@@ -965,6 +1055,92 @@ class SpectrumViewMixin:
                     self.y_fit_start = y.copy()
                 else:
                     self.y_fit_start = self.y_fit_start + y
+
+    def _refresh_pic_table(self):
+        table = getattr(self, "pic_table", None)
+        if table is None:
+            return
+
+        if not hasattr(self, "Param0") or not hasattr(self, "Nom_pic"):
+            table.setRowCount(0)
+            return
+
+        gauge_index = getattr(self, "index_jauge", -1)
+        if gauge_index is None or gauge_index < 0:
+            table.setRowCount(0)
+            return
+
+        params_list = self.Param0[gauge_index] if gauge_index < len(self.Param0) else []
+        names_list = self.Nom_pic[gauge_index] if gauge_index < len(self.Nom_pic) else []
+        if params_list is None:
+            params_list = []
+        if names_list is None:
+            names_list = []
+
+        self._refreshing_pic_table = True
+        try:
+            table.setRowCount(len(params_list))
+
+            def _fmt_number(value):
+                if value is None:
+                    return ""
+                if isinstance(value, (list, tuple, np.ndarray)):
+                    arr = np.asarray(value).ravel()
+                    return ", ".join(f"{v:.4g}" for v in arr)
+                try:
+                    return f"{float(value):.4g}"
+                except Exception:
+                    return str(value)
+
+            for row, params in enumerate(params_list):
+                name_val = names_list[row] if row < len(names_list) else ""
+                coef_val = params[3] if len(params) > 3 else None
+                values = [
+                    name_val,
+                    params[0] if len(params) > 0 else "",
+                    params[1] if len(params) > 1 else "",
+                    params[2] if len(params) > 2 else "",
+                    coef_val,
+                    params[4] if len(params) > 4 else "",
+                ]
+
+                for col, val in enumerate(values):
+                    item = QTableWidgetItem(_fmt_number(val))
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    table.setItem(row, col, item)
+
+            self._sync_pic_table_selection(self.index_pic_select)
+        finally:
+            self._refreshing_pic_table = False
+
+    def _sync_pic_table_selection(self, row: Optional[int]):
+        table = getattr(self, "pic_table", None)
+        if table is None:
+            return
+
+        self._refreshing_pic_table = True
+        try:
+            if row is None or row < 0 or row >= table.rowCount():
+                table.clearSelection()
+                return
+            table.selectRow(int(row))
+        finally:
+            self._refreshing_pic_table = False
+
+    def _on_pic_table_selection_changed(self):
+        if getattr(self, "_refreshing_pic_table", False):
+            return
+
+        table = getattr(self, "pic_table", None)
+        if table is None:
+            return
+
+        selected_rows = table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        self.index_pic_select = selected_rows[0].row()
+        self.select_pic()
 
         if self.Spectrum is not None:
             if self.Spectrum.indexX is not None:
@@ -998,7 +1174,9 @@ class SpectrumViewMixin:
             del(self.plot_pic_fit[self.index_jauge][-1])
             self.text_box_msg.setText('UNDO PIC')
             del(self.list_y_fit_start[self.index_jauge][-1])
+            self.index_pic_select = self.J[self.index_jauge] - 1
             self.Print_fit_start()
+            self._refresh_pic_table()
 
     def Undo_pic_select(self):
         if self.index_pic_select is not None:
@@ -1021,13 +1199,29 @@ class SpectrumViewMixin:
                 del(self.plot_pic_fit[self.index_jauge][self.index_pic_select])
                 del(self.list_y_fit_start[self.index_jauge][self.index_pic_select])
                 del(self.Spectrum.Gauges[self.index_jauge].pics[self.index_pic_select])
+                self.index_pic_select = min(self.index_pic_select, self.J[self.index_jauge] - 1)
                 self.Print_fit_start()
+                self._refresh_pic_table()
     
     def select_pic(self):
         if not self.bit_bypass:
-            self.index_pic_select = self.listbox_pic.currentRow()
-            if self.index_pic_select < 0:
+            if hasattr(self, "pic_table") and self.pic_table is not None:
+                selected_rows = self.pic_table.selectionModel().selectedRows()
+                self.index_pic_select = selected_rows[0].row() if selected_rows else -1
+            elif hasattr(self, "listbox_pic"):
+                self.index_pic_select = self.listbox_pic.currentRow()
+            if self.index_pic_select is None or self.index_pic_select < 0:
                 return
+
+        if (
+            self.index_jauge is None
+            or self.index_jauge < 0
+            or self.index_jauge >= len(self.Param0)
+            or self.index_pic_select is None
+            or self.index_pic_select < 0
+            or self.index_pic_select >= len(self.Param0[self.index_jauge])
+        ):
+            return
 
         # Mise à jour X0/Y0
         self.X0 = self.Param0[self.index_jauge][self.index_pic_select][0]
@@ -1079,6 +1273,8 @@ class SpectrumViewMixin:
             else:
                 self._update_curve_safe(self.curve_zoom_data, [], [])
                 self._update_curve_safe(self.curve_zoom_data_brut, [], [])
+
+        self._sync_pic_table_selection(self.index_pic_select)
 
         # ------------- Limites du ZOOM : basées sur le pic sélectionné -------------
         if hasattr(S, "wnb") and S.wnb is not None:
@@ -1234,6 +1430,7 @@ class SpectrumViewMixin:
                 self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit,
             )
             self._update_curve_safe(self.curve_zoom_data_brut, x_data, self.Spectrum.spec- self.Spectrum.blfit)
+        self._refresh_pic_table()
         self._update_fit_window()
         # Option : ne zoomer que sur la zone où le pic est significatif
         # par exemple là où y_pic > 10% du max
@@ -1330,6 +1527,7 @@ class SpectrumViewMixin:
                 self.Spectrum.spec - (self.y_fit_start - y_plot_full) - self.Spectrum.blfit,
             )
             self._update_curve_safe(self.curve_zoom_data_brut, x_data, self.Spectrum.spec - self.Spectrum.blfit)
+        self._refresh_pic_table()
         self._update_fit_window()
         # Option : ne zoomer que sur la zone où le pic est significatif
         # par exemple là où y_pic > 10% du max
@@ -1558,6 +1756,7 @@ class SpectrumViewMixin:
         )
         self.name_gauge.setText("In")
         self.name_gauge.setStyleSheet("background-color: green;")
+        self._refresh_pic_table()
 
     def on_spec_index_changed(self, value: int):
         """Appelé quand on change l'index de spectre via la spinbox."""
