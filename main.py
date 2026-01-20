@@ -1470,6 +1470,7 @@ class MainWindow(
                 "gauge_index": j,
                 "save_jauge": save_jauge,
                 "save_pic": save_pic,
+                "bypass": self.bit_bypass,
                 "sum_function": sum_function,
             },
             result_slot=self._apply_single_fit_result,
@@ -1482,91 +1483,96 @@ class MainWindow(
             self.text_box_msg.setText("FIT ERROR")
             return
 
-        params = payload["params"]
-        x_fit = payload["x_fit"]
-        y_fit = payload["y_fit"]
-        fit = payload.get("fit")
-        j = payload.get("gauge_index", -1)
-        save_jauge = payload.get("save_jauge", self.index_jauge)
-        save_pic = payload.get("save_pic", self.index_pic_select)
-        sum_function = payload.get("sum_function")
+        previous_bypass = self.bit_bypass
+        self.bit_bypass = payload.get("bypass", self.bit_bypass)
+        try:
+            params = payload["params"]
+            x_fit = payload["x_fit"]
+            y_fit = payload["y_fit"]
+            fit = payload.get("fit")
+            j = payload.get("gauge_index", -1)
+            save_jauge = payload.get("save_jauge", self.index_jauge)
+            save_pic = payload.get("save_pic", self.index_pic_select)
+            sum_function = payload.get("sum_function")
 
-        if j < 0 or j >= len(self.Spectrum.Gauges):
-            self.text_box_msg.setText("FIT ERROR (index)")
-            return
+            if j < 0 or j >= len(self.Spectrum.Gauges):
+                self.text_box_msg.setText("FIT ERROR (index)")
+                return
 
-        if fit is None and sum_function is not None:
-            fit = sum_function(x_fit, *params)
+            if fit is None and sum_function is not None:
+                fit = sum_function(x_fit, *params)
 
-        accepted, is_better = self._propose_and_confirm_fit(
-            x_fit=x_fit,
-            y_fit=y_fit,
-            fit=fit,
-            color="r",
-            text_base="Curve_fit",
-            use_abs=True,
-        )
+            accepted, is_better = self._propose_and_confirm_fit(
+                x_fit=x_fit,
+                y_fit=y_fit,
+                fit=fit,
+                color="r",
+                text_base="Curve_fit",
+                use_abs=True,
+            )
 
-        if not accepted:
+            if not accepted:
+                self.Spectrum.bit_fit = True
+                self.bit_fit_T = True
+                self.text_box_msg.setText("BAD FIT $R^2$ INCREAS")
+                return
+
+            # 3) Mise à jour des données de la jauge j uniquement
+            self.Spectrum.Gauges[j].Y = fit + self.Spectrum.blfit
+            self.Spectrum.Gauges[j].X = x_fit
+            self.Spectrum.Gauges[j].dY = y_fit - fit
+            self.Spectrum.lamb_fit = params[0]
+
+            ij_3 = ij_4 = ij_5 = 0
+            for i, J in enumerate(self.Spectrum.Gauges):
+                for k, p in enumerate(J.pics):
+                    n_c = len(self.Param0[i][k][3])
+                    start_idx = 3 * ij_3 + 4 * ij_4 + 5 * ij_5
+                    end_idx = start_idx + 3
+
+                    if n_c == 0:
+                        self.Param0[i][k][:3] = list(params[start_idx:end_idx])
+                        ij_3 += 1
+                    elif n_c == 1:
+                        self.Param0[i][k][:4] = list(params[start_idx:end_idx]) + list(
+                            np.array(params[end_idx])
+                        )
+                        ij_4 += 1
+                    elif n_c == 2:
+                        self.Param0[i][k][:4] = list(params[start_idx:end_idx]) + list(
+                            np.array(params[end_idx : end_idx + 2])
+                        )
+                        ij_5 += 1
+
+                    p.Update(
+                        ctr=float(self.Param0[i][k][0]),
+                        ampH=float(self.Param0[i][k][1]),
+                        coef_spe=self.Param0[i][k][3],
+                        sigma=float(self.Param0[i][k][2]),
+                        inter=float(self.inter_entry.value()),
+                    )
+                    params_f = p.model.make_params()
+                    self.list_y_fit_start[i][k] = p.model.eval(
+                        params_f, x=self.Spectrum.wnb
+                    )
+                    new_name = (
+                        f"{self.Nom_pic[i][k]}   X0:{self.Param0[i][k][0]}"
+                        f"   Y0:{self.Param0[i][k][1]}"
+                        f"   sigma:{self.Param0[i][k][2]}"
+                        f"   Coef:{self.Param0[i][k][3]}"
+                        f" ; Modele:{self.Param0[i][k][4]}"
+                    )
+                    self.list_text_pic[i][k] = str(new_name)
+
             self.Spectrum.bit_fit = True
+            self.text_box_msg.setText("FIT TOTAL \n DONE")
             self.bit_fit_T = True
-            self.text_box_msg.setText("BAD FIT $R^2$ INCREAS")
-            return
-
-        # 3) Mise à jour des données de la jauge j uniquement
-        self.Spectrum.Gauges[j].Y = fit + self.Spectrum.blfit
-        self.Spectrum.Gauges[j].X = x_fit
-        self.Spectrum.Gauges[j].dY = y_fit - fit
-        self.Spectrum.lamb_fit = params[0]
-
-        ij_3 = ij_4 = ij_5 = 0
-        for i, J in enumerate(self.Spectrum.Gauges):
-            for k, p in enumerate(J.pics):
-                n_c = len(self.Param0[i][k][3])
-                start_idx = 3 * ij_3 + 4 * ij_4 + 5 * ij_5
-                end_idx = start_idx + 3
-
-                if n_c == 0:
-                    self.Param0[i][k][:3] = list(params[start_idx:end_idx])
-                    ij_3 += 1
-                elif n_c == 1:
-                    self.Param0[i][k][:4] = list(params[start_idx:end_idx]) + list(
-                        np.array(params[end_idx])
-                    )
-                    ij_4 += 1
-                elif n_c == 2:
-                    self.Param0[i][k][:4] = list(params[start_idx:end_idx]) + list(
-                        np.array(params[end_idx : end_idx + 2])
-                    )
-                    ij_5 += 1
-
-                p.Update(
-                    ctr=float(self.Param0[i][k][0]),
-                    ampH=float(self.Param0[i][k][1]),
-                    coef_spe=self.Param0[i][k][3],
-                    sigma=float(self.Param0[i][k][2]),
-                    inter=float(self.inter_entry.value()),
-                )
-                params_f = p.model.make_params()
-                self.list_y_fit_start[i][k] = p.model.eval(
-                    params_f, x=self.Spectrum.wnb
-                )
-                new_name = (
-                    f"{self.Nom_pic[i][k]}   X0:{self.Param0[i][k][0]}"
-                    f"   Y0:{self.Param0[i][k][1]}"
-                    f"   sigma:{self.Param0[i][k][2]}"
-                    f"   Coef:{self.Param0[i][k][3]}"
-                    f" ; Modele:{self.Param0[i][k][4]}"
-                )
-                self.list_text_pic[i][k] = str(new_name)
-
-        self.Spectrum.bit_fit = True
-        self.text_box_msg.setText("FIT TOTAL \n DONE")
-        self.bit_fit_T = True
-        self.index_jauge = save_jauge
-        self.index_pic_select = save_pic
-        self.LOAD_Gauge()
-        self.Print_fit_start()
+            self.index_jauge = save_jauge
+            self.index_pic_select = save_pic
+            self.LOAD_Gauge()
+            self.Print_fit_start()
+        finally:
+            self.bit_bypass = previous_bypass
 
     def FIT_lmfitVScurvfit(self):
         """Fit global sur toutes les jauges (sans tracés Matplotlib)."""
@@ -1660,6 +1666,7 @@ class MainWindow(
                 "gauge_indices": list(gauge_indices),
                 "save_jauge": save_jauge,
                 "save_pic": save_pic,
+                "bypass": self.bit_bypass,
                 "sum_function": sum_function,
             },
             result_slot=self._apply_global_fit_result,
@@ -1672,100 +1679,105 @@ class MainWindow(
             self.text_box_msg.setText("FIT ERROR")
             return
 
-        params = payload["params"]
-        x_sub = payload.get("x_sub")
-        y_sub = payload.get("y_sub")
-        blfit = payload.get("blfit")
-        sum_function = payload.get("sum_function")
-        save_jauge = payload.get("save_jauge", self.index_jauge)
-        save_pic = payload.get("save_pic", self.index_pic_select)
+        previous_bypass = self.bit_bypass
+        self.bit_bypass = payload.get("bypass", self.bit_bypass)
+        try:
+            params = payload["params"]
+            x_sub = payload.get("x_sub")
+            y_sub = payload.get("y_sub")
+            blfit = payload.get("blfit")
+            sum_function = payload.get("sum_function")
+            save_jauge = payload.get("save_jauge", self.index_jauge)
+            save_pic = payload.get("save_pic", self.index_pic_select)
 
-        if sum_function is None:
-            self.text_box_msg.setText("FIT ERROR")
-            return
+            if sum_function is None:
+                self.text_box_msg.setText("FIT ERROR")
+                return
 
-        fit = sum_function(x_sub, *params)
+            fit = sum_function(x_sub, *params)
 
-        accepted, is_better = self._propose_and_confirm_fit(
-            x_fit=x_sub,
-            y_fit=y_sub,
-            fit=fit,
-            color="m",
-            text_base="Curve_fit",
-            use_abs=False,
-        )
+            accepted, is_better = self._propose_and_confirm_fit(
+                x_fit=x_sub,
+                y_fit=y_sub,
+                fit=fit,
+                color="m",
+                text_base="Curve_fit",
+                use_abs=False,
+            )
 
-        if not accepted:
-            # On garde les anciens paramètres et on re-affiche les courbes start
+            if not accepted:
+                # On garde les anciens paramètres et on re-affiche les courbes start
+                self.Spectrum.bit_fit = True
+                self.bit_fit_T = True
+                self.Spectrum.Calcul_study(mini=False)
+                self.text_box_msg.setText("BAD FIT r^2 INCREAS")
+                self.Print_fit_start()
+                return
+
+            # 5) Validation : mise à jour de Spectrum + Param0 + list_y_fit_start
+            self.Spectrum.Y = fit + blfit
+            self.Spectrum.X = x_sub
+            self.Spectrum.dY = y_sub - fit
+            self.Spectrum.lamb_fit = params[0]
+
+            ij_3 = ij_4 = ij_5 = 0
+            params_list = list(params)
+
+            for i, J in enumerate(self.Spectrum.Gauges):
+                for j, p in enumerate(J.pics):
+                    n_c = len(self.Param0[i][j][3])
+                    start_idx = 3 * ij_3 + 4 * ij_4 + 5 * ij_5
+                    end_idx = start_idx + 3
+
+                    if n_c == 0:
+                        self.Param0[i][j][:4] = params_list[start_idx:end_idx]
+                        ij_3 += 1
+                    elif n_c == 1:
+                        self.Param0[i][j][:4] = (
+                            params_list[start_idx:end_idx]
+                            + [np.array([params_list[end_idx]])]
+                        )
+                        ij_4 += 1
+                    elif n_c == 2:
+                        self.Param0[i][j][:4] = (
+                            params_list[start_idx:end_idx]
+                            + [np.array(params_list[end_idx : end_idx + 2])]
+                        )
+                        ij_5 += 1
+
+                    p.Update(
+                        ctr=float(self.Param0[i][j][0]),
+                        ampH=float(self.Param0[i][j][1]),
+                        coef_spe=self.Param0[i][j][3],
+                        sigma=float(self.Param0[i][j][2]),
+                        inter=float(self.inter_entry.value()),
+                    )
+                    params_f = p.model.make_params()
+                    y_plot = p.model.eval(params_f, x=self.Spectrum.wnb)
+                    self.list_y_fit_start[i][j] = y_plot
+
+                    new_name = (
+                        f"{self.Nom_pic[i][j]}   X0:{self.Param0[i][j][0]}"
+                        f"   Y0:{self.Param0[i][j][1]}"
+                        f"   sigma:{self.Param0[i][j][2]}"
+                        f"   Coef:{self.Param0[i][j][3]}"
+                        f" ; Modele:{self.Param0[i][j][4]}"""
+                    )
+                    self.list_text_pic[i][j] = str(new_name)
+
+                J.lamb_fit = self.Param0[i][0][0]
+                J.bit_fit = True
+
             self.Spectrum.bit_fit = True
-            self.bit_fit_T = True
             self.Spectrum.Calcul_study(mini=False)
-            self.text_box_msg.setText("BAD FIT r^2 INCREAS")
+            self.text_box_msg.setText("FIT TOTAL \n DONE")
+            self.bit_fit_T = True
+            self.index_jauge = save_jauge
+            self.index_pic_select = save_pic
+            self.LOAD_Gauge()
             self.Print_fit_start()
-            return
-
-        # 5) Validation : mise à jour de Spectrum + Param0 + list_y_fit_start
-        self.Spectrum.Y = fit + blfit
-        self.Spectrum.X = x_sub
-        self.Spectrum.dY = y_sub - fit
-        self.Spectrum.lamb_fit = params[0]
-
-        ij_3 = ij_4 = ij_5 = 0
-        params_list = list(params)
-
-        for i, J in enumerate(self.Spectrum.Gauges):
-            for j, p in enumerate(J.pics):
-                n_c = len(self.Param0[i][j][3])
-                start_idx = 3 * ij_3 + 4 * ij_4 + 5 * ij_5
-                end_idx = start_idx + 3
-
-                if n_c == 0:
-                    self.Param0[i][j][:4] = params_list[start_idx:end_idx]
-                    ij_3 += 1
-                elif n_c == 1:
-                    self.Param0[i][j][:4] = (
-                        params_list[start_idx:end_idx]
-                        + [np.array([params_list[end_idx]])]
-                    )
-                    ij_4 += 1
-                elif n_c == 2:
-                    self.Param0[i][j][:4] = (
-                        params_list[start_idx:end_idx]
-                        + [np.array(params_list[end_idx : end_idx + 2])]
-                    )
-                    ij_5 += 1
-
-                p.Update(
-                    ctr=float(self.Param0[i][j][0]),
-                    ampH=float(self.Param0[i][j][1]),
-                    coef_spe=self.Param0[i][j][3],
-                    sigma=float(self.Param0[i][j][2]),
-                    inter=float(self.inter_entry.value()),
-                )
-                params_f = p.model.make_params()
-                y_plot = p.model.eval(params_f, x=self.Spectrum.wnb)
-                self.list_y_fit_start[i][j] = y_plot
-
-                new_name = (
-                    f"{self.Nom_pic[i][j]}   X0:{self.Param0[i][j][0]}"
-                    f"   Y0:{self.Param0[i][j][1]}"
-                    f"   sigma:{self.Param0[i][j][2]}"
-                    f"   Coef:{self.Param0[i][j][3]}"
-                    f" ; Modele:{self.Param0[i][j][4]}"""
-                )
-                self.list_text_pic[i][j] = str(new_name)
-
-            J.lamb_fit = self.Param0[i][0][0]
-            J.bit_fit = True
-
-        self.Spectrum.bit_fit = True
-        self.Spectrum.Calcul_study(mini=False)
-        self.text_box_msg.setText("FIT TOTAL \n DONE")
-        self.bit_fit_T = True
-        self.index_jauge = save_jauge
-        self.index_pic_select = save_pic
-        self.LOAD_Gauge()
-        self.Print_fit_start()
+        finally:
+            self.bit_bypass = previous_bypass
 
     def Read_RUN(self, RUN):
         l_P, l_sigma_P, l_lambda, l_fwhm = [], [], [], []
@@ -2626,6 +2638,16 @@ class MainWindow(
             self.text_box_msg.setText("Multi-fit chaîné interrompu par l'utilisateur.")
         else:
             self.text_box_msg.setText("Multi-fit chaîné terminé.")
+
+    def apply_from_spin(self):
+        """Synchronise les spinbox start/stop avec la région de fit en mode bypass."""
+        previous_bypass = self.bit_bypass
+        self.bit_bypass = True
+        try:
+            if hasattr(self, "_apply_fit_from_spin"):
+                self._apply_fit_from_spin()
+        finally:
+            self.bit_bypass = previous_bypass
 
     # ============================================================
     # Helpers graphiques / PyQtGraph
