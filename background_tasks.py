@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 class TaskSignals(QObject):
     """Signals utilisés par les tâches longues exécutées en fond."""
-
     result = pyqtSignal(object)
     error = pyqtSignal(str)
     finished = pyqtSignal()

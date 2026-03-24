@@ -62,9 +62,10 @@ class SpectrumViewMixin:
         self.pg_spectrum.hideAxis('bottom')
 
         # Résidus / dY (en haut)
-        self.pg_dy = self._add_spec_plot(row=1, col=0)
+        r_axis_sci = SciAxis(orientation='left')
+        self.pg_dy = self._add_spec_plot(row=1, col=0,axisItems={'left': r_axis_sci},y_label='r (U.A)')
         self.pg_dy.setXLink(self.pg_spectrum)
-        container_layout.addWidget(self.pg_spec, stretch=3)
+        container_layout.addWidget(self.pg_spec, stretch=5)
 
         # ================== Colonne droite : AddBox + Zoom ==================
         right_layout = QHBoxLayout()
@@ -213,7 +214,7 @@ class SpectrumViewMixin:
     def _configure_spectrum_layout(self) -> None:
         # ================== FACTEURS LIGNES / COLONNES ==================
         # 2 lignes empilées (Residuals / Spectrum)
-        self._spec_row_factors = (5, 1)
+        self._spec_row_factors = (6, 1)
         # 1 colonne dans le GraphicsLayoutWidget
         self._spec_col_factors = (1,)
 
@@ -255,7 +256,7 @@ class SpectrumViewMixin:
         x_array = np.asarray(x_data) if x_data is not None else np.array([])
         y_array = np.asarray(y_data) if y_data is not None else np.array([])
 
-        if x_array.size == 0 and y_array.size == 0 and self._curve_is_empty(curve):
+        if (x_array.size == 0 and y_array.size == 0 and self._curve_is_empty(curve) ) or (len(x_array) != len(y_array)):
             return False
 
         x_old, y_old = curve.getData()
@@ -263,10 +264,10 @@ class SpectrumViewMixin:
             x_old is not None
             and y_old is not None
             and len(x_old) == len(x_array)
-            and len(y_old) == len(y_array)
+            and len(y_old) 
             and np.array_equal(x_old, x_array)
             and np.array_equal(y_old, y_array)
-        ):
+            ):
             return False
 
         curve.setData(x_array, y_array)
@@ -436,7 +437,6 @@ class SpectrumViewMixin:
 
         self._update_curve_safe(self.cross_zoom, [x], [y])
 
-
     def _select_nearest_pic_from_x(self, x):
         if self.Spectrum is None or self.Param0 is None:
             return
@@ -513,8 +513,8 @@ class SpectrumViewMixin:
             return
 
         # --- On mémorise les X/Y du spectre principal pour les autres graphes ---
-        x_spec = None
-        y_spec = None
+        x_spec,x = None,None
+        y_spec,y = None,None
 
         # 1) Spectre corrigé
         if hasattr(S, "x_corr") and hasattr(S, "y_corr") and S.x_corr is not None and S.y_corr is not None:
@@ -527,8 +527,6 @@ class SpectrumViewMixin:
 
             vb_spec = self.pg_spectrum.getViewBox()
 
-            # Contraindre les bornes de pan/zoom au spectre
-            self._set_viewbox_limits_from_data(vb_spec, x, y, padding=0.02)
 
             # Centrer la vue sur les données seulement une fois
             if not self._spectrum_limits_initialized:
@@ -564,6 +562,8 @@ class SpectrumViewMixin:
         if self._is_print_baseline_enabled():
             if hasattr(S, "wnb") and S.wnb is not None and hasattr(S, "spec") and S.spec is not None:
                 self._update_curve_safe(self.curve_spec_brut, S.wnb, S.spec)
+                x=np.array(list(x)+list(S.wnb))
+                y=np.array(list(y)+list(S.spec))
             else:
                 self._update_curve_safe(self.curve_spec_brut, [], [])
 
@@ -576,9 +576,14 @@ class SpectrumViewMixin:
                 self._update_curve_safe(self.curve_spec_blfit, S.wnb, S.blfit)
             else:
                 self._update_curve_safe(self.curve_spec_blfit, [], [])
+
         else:
             self._update_curve_safe(self.curve_spec_brut, [], [])
             self._update_curve_safe(self.curve_spec_blfit, [], [])
+
+            # Contraindre les bornes de pan/zoom au spectre
+        
+        self._set_viewbox_limits_from_data(vb_spec, x, y, padding=0.02)
 
 
        
@@ -1567,7 +1572,6 @@ class SpectrumViewMixin:
         l_name = [ga.name for ga in spec.Gauges]
         try:
             index = l_name.index(self.Gauge_type_selector.currentText())
-            print(index)
         except Exception:
             index=None
             self.Gauge_type_selector.setCurrentIndex(l_name.index(self.Gauge_type_selector.currentText()))
@@ -1581,20 +1585,24 @@ class SpectrumViewMixin:
         self._clear_selected_peak_overlay()
 
         G = self.Spectrum.Gauges[self.index_jauge]
-
-        if G.name == "Ruby":
-            self.spinbox_T.setEnabled(True)
-        else:
-            self.spinbox_T.setEnabled(False)
-            self.spinbox_T.setValue(293)
-            self.deltalambdaT = 0
-
         self.lamb0_entry.setText(str(G.lamb0))
         self.name_spe_entry.setText(str(G.name_spe))
         self.spinbox_P.setValue(G.P)
 
         self.f_dell_lines()
         self.f_p_move(G, value=G.P)
+
+        if G.name == "Ruby":
+            self.spinbox_T.setEnabled(True)
+            self.spinbox_T.setValue(G.T)
+            self.f_dell_lines()
+            self.f_t_move(G, value=G.T)
+        else:
+            self.spinbox_T.setEnabled(False)
+            self.spinbox_T.setValue(293)
+            self.deltalambdaT = 0
+
+        
 
         self.Gauge_type_selector.setCurrentIndex(
             self.liste_type_Gauge.index(G.name)

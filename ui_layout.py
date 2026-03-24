@@ -47,8 +47,8 @@ class UiLayoutMixin:
         # Ajustement des proportions dans la grille
         self.grid_layout.setColumnStretch(0, 0)
         self.grid_layout.setColumnStretch(1, 0)
-        self.grid_layout.setColumnStretch(2, 5)
-        self.grid_layout.setColumnStretch(3, 5)
+        self.grid_layout.setColumnStretch(2, 4)
+        self.grid_layout.setColumnStretch(3, 4)
         self.grid_layout.setRowStretch(0, 5)
         self.grid_layout.setRowStretch(1, 1)
         self.grid_layout.setRowStretch(2, 2)
@@ -435,7 +435,6 @@ class UiLayoutMixin:
         self.text_box_msg = QLabel("Good Luck and Have Fun")
         self.grid_layout.addWidget(self.text_box_msg, 3, 2, 1, 1)
 
-    
     def _setup_file_gestion(self):
         group_fichiers = QGroupBox("File gestion")
         layout_fichiers = QVBoxLayout()

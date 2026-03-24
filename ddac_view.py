@@ -83,6 +83,8 @@ class DdacViewMixin:
 
         layout_graphique.addLayout(movie_layout)
         # FPS
+        self._set_movie_controls_enabled(False)
+
 
         self.fps_play_spinbox = QSpinBox()
         self.fps_play_spinbox.setRange(1, 1000)
@@ -204,6 +206,11 @@ class DdacViewMixin:
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
+        self.dpdt_range_entry = QSpinBox()
+        self.dpdt_range_entry.setRange(2, 100)
+        self.dpdt_range_entry.setValue(3)
+        controls_layout.addWidget(self.dpdt_range_entry)
+
         """Crée 2 régions (fit & camera) sur tous les graphes temporels (pas sur le film)."""
 
         # --- états / garde-fous ---
@@ -289,13 +296,13 @@ class DdacViewMixin:
 
             # symbolPen dépendant du run (les symbolBrush restent gauge-colored chez toi)
             for curve in state.curves_P:
-                curve.setSymbolPen(pg.mkPen(c))
+                curve.setPen(pg.mkPen(c, width=2))
             for curve in state.curves_dPdt:
-                curve.setSymbolPen(pg.mkPen(c))
+                curve.setPen(pg.mkPen(c, width=2))
             for curve in state.curves_sigma:
-                curve.setSymbolPen(pg.mkPen(c))
+                curve.setPen(pg.mkPen(c, width=2))
             for curve in state.curves_dlambda:
-                curve.setSymbolPen(pg.mkPen(c))
+                curve.setPen(pg.mkPen(c, width=2))
 
     def attach_spectrum_time(self, time_array):
         """À appeler quand tu as Time (temps des spectres). Sert à borner & synchroniser FitRegion."""
@@ -429,7 +436,7 @@ class DdacViewMixin:
         """CamRegion (temps) -> zone_movie + sync autres CamRegion."""
         if self._block_cam or self._cam_time is None:
             return
-
+        
         t0, t1 = src_region.getRegion()
         if t0 > t1:
             t0, t1 = t1, t0
@@ -475,6 +482,7 @@ class DdacViewMixin:
             state.ced = copy.deepcopy(self.RUN)
 
     def _finalize_run_selection(self, state: RunViewState, name_select: str):
+        self.CLEAR_ALL()
         """Replace l'ancienne logique basée sur index_select par l'état RunViewState."""
         self.current_run_id = self._get_run_id(state.ced)
         # On travaille sur une copie pour préserver l'instantané stocké dans le RunViewState
@@ -494,7 +502,10 @@ class DdacViewMixin:
             self.current_index = len(state.index_cam) // 2
             self.slider.setMaximum(max(0, len(state.index_cam) - 1))
             self.slider.setValue(self.current_index)
-            self.attach_camera_time(time_array=state.time)
+            self.attach_camera_time(time_array=state.t_cam)
+        print("READY bool",bool(state.index_cam))
+        self._set_movie_controls_enabled(bool(state.index_cam))
+
 
         if state.time is not None and len(state.time)>0:
             x_min, x_max = min(state.time), max(state.time)
@@ -511,7 +522,7 @@ class DdacViewMixin:
 
         self.label_CED.setText( f"CEDd {name_select} fps :{text_fps}")
 
-        self.CLEAR_ALL()
+        
         # Mise à jour de la spinbox de spectre
         n_spec = len(self.RUN.list_nspec) if hasattr(self.RUN, "list_nspec") else len(self.RUN.Spectra)
         self.spinbox_spec_index.blockSignals(True)
@@ -694,7 +705,7 @@ class DdacViewMixin:
         state.spectre_number = spectre_number
 
         for i, G in enumerate(Gauges_RUN):
-            l_p_filtre = CL.savgol_filter(l_P[i], 10, 1) if len(l_P[i]) > 0 else np.array([])
+            l_p_filtre = CL.savgol_filter(l_P[i], self.dpdt_range_entry.value(), 1) if len(l_P[i]) > 0 else np.array([])
             if len(l_p_filtre) > 4 and len(Time) > 4:
                 dps = [
                     (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
@@ -731,7 +742,7 @@ class DdacViewMixin:
                 pen=pg.mkPen('darkred'),
                 symbol='t',
                 symbolBrush='darkred',
-                symbolSize=6,
+                symbolSize=10,
             )
             self._update_curve_safe(curve_T, Time, l_T[-1] if l_T else [])
         elif state.curves_T:
@@ -744,14 +755,14 @@ class DdacViewMixin:
                 self.pg_dlambda,
                 pen=None,
                 symbol='+',
-                symbolPen=pg.mkPen(state.color),
+                symbolPen=pg.mkPen(self._get_run_color(state)),
             )
             self._update_curve_safe(curve, Time, spe)
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
             self._update_curve_safe(state.curves_dlambda[extra_index], [], [])
 
         if self.RUN.data_Oscillo is not None:
-            state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(state.color))
+            state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(self._get_run_color(state)))
             self._update_curve_safe(state.piezo_curve, time_amp, amp)
         elif state.piezo_curve is not None:
             self._update_curve_safe(state.piezo_curve, [], [])
@@ -822,8 +833,11 @@ class DdacViewMixin:
             if Frame is not None:
                 self.img_item.setImage(np.array(Frame), autoLevels=True)
 
-        self.slider.setMaximum(max(0, len(state.index_cam) - 1))
-        self.slider.setValue(self.current_index)
+        ready = bool(state.index_cam) and bool(state.t_cam) #and (state.cap is not None)
+        self._set_movie_controls_enabled(ready)
+        if ready:
+            self.slider.setRange(0, len(state.index_cam)-1)
+            self.slider.setValue(self.current_index)
         self._update_movie_frame()
 
     def PRINT_CEDd(self, item=None, objet_run=None):
@@ -918,6 +932,7 @@ class DdacViewMixin:
         state.time = Time
         state.spectre_number = self.RUN.list_nspec
         state.list_item = item_run
+        state.t_cam=self.RUN.time_movie
         if state.t_cam and len(state.t_cam) > 1:
             self.attach_camera_time(state.t_cam)
 
@@ -925,7 +940,7 @@ class DdacViewMixin:
 
         for i, G in enumerate(Gauges_RUN):
             if len(l_P[i]) >= 10:
-                l_p_filtre = CL.savgol_filter(l_P[i], 10, 1)
+                l_p_filtre = CL.savgol_filter(l_P[i], self.dpdt_range_entry.value(), 1)
             else:
                 l_p_filtre =l_P[i]
             dps = [
@@ -933,31 +948,31 @@ class DdacViewMixin:
                 for x in range(2, len(l_p_filtre) - 2)
             ]
             state.curves_P.append(
-                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
+                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
             )   
             state.curves_dPdt.append(
-                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
+                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
             )
             state.curves_sigma.append(
-                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(G.color_print[0], width=1), symbol='d', symbolPen=pg.mkPen(c), symbolBrush=G.color_print[0], symbolSize=5)
+                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
             )
         if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
             state.curves_T.append(
-                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen('darkred'), symbol='t', symbolBrush='darkred', symbolSize=6)
+                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen("darkred", width=2),symbolBrush=c, symbolSize=10)
             )
         else:
             state.curves_T.append(self.pg_dPdt.plot([], []))
 
         # Piezo
         if self.RUN.data_Oscillo is not None:
-            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c))
+            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c, width=3))
         else:
             state.piezo_curve = self.pg_P.plot([], [])
 
         for spe in l_spe:
             if spe is not []:
                 state.curves_dlambda.append(
-                    self.pg_dlambda.plot(Time, spe, pen=None, symbol='+', symbolPen=pg.mkPen(c))
+                    self.pg_dlambda.plot(Time, spe, pen=pg.mkPen(c, width=3), symbol='h', symbolPen=pg.mkPen(c, width=3), symbolSize=10)
                 )
 
         # Film
@@ -985,6 +1000,7 @@ class DdacViewMixin:
                 result_slot=self._on_movie_metrics_ready,
                 description="Calcul corrélation/trajectoire…",
             )
+
         else:
             self.Num_im = 0
             t = Time[0]
@@ -995,8 +1011,12 @@ class DdacViewMixin:
         self._finalize_run_selection(state, name_select)
         self._refresh_ddac_limits(state)
 
-    
-
+    def _set_movie_controls_enabled(self, enabled: bool):
+        self.slider.setEnabled(enabled)
+        self.previous_button.setEnabled(enabled)
+        self.play_stop_button.setEnabled(enabled)
+        self.next_button.setEnabled(enabled)
+   
 
     def f_text_CEDd_print(self, t):
         """Met à jour le texte d'information dDAC dans le TextItem PyQtGraph."""
@@ -1005,8 +1025,8 @@ class DdacViewMixin:
             dp = (self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3
 
         txt = (
-            f"$t_spec$={self.x1*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
-            f"$t_frame$={t*1e6:.3f}µs n°Frame={self.Num_im}\n\n"
+            f"t_spec={self.x1*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
+            f"t_frame={t*1e3:.3f}µs n°Frame={self.Num_im}\n\n"
             f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
             f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
             )
@@ -1019,14 +1039,14 @@ class DdacViewMixin:
             return
 
         # temps courant pour le film (si t_cam dispo)
-        if self.RUN.Movie is not None and state.t_cam:
+        if state.t_cam:
             t = state.t_cam[self.current_index]
         else:
             t = 0.0
 
         # spectre le plus proche en temps
         times = np.array(state.time)
-        idx_spec = int(np.argmin(np.abs(times - self.x_clic)))
+        idx_spec = int(np.argmin(np.abs(times - self.x_clic)))-1
         spec_nb = state.spectre_number[idx_spec]
 
         if self.spectrum_select_box.isChecked() and int(spec_nb) != self.index_spec:
@@ -1096,6 +1116,8 @@ class DdacViewMixin:
             self.line_nspec.setPos(x)
             if hasattr(self, "scatter_dlambda"):
                 self._update_curve_safe(self.scatter_dlambda, [x], [y])
+        
+
 
     def _reset_dp_selection(self):
         """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
@@ -1119,6 +1141,7 @@ class DdacViewMixin:
 
         t_array = np.array(state.t_cam)
         self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
+        self.Num_im=state.index_cam[self.current_index]
         self.slider.blockSignals(True)
         self.slider.setValue(self.current_index)
         self.slider.blockSignals(False)
@@ -1147,6 +1170,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         self._sync_movie_after_click(state)
         self.f_CEDd_update_print()
+
 
     def _on_slider_movie_changed(self, idx: int):
         """Callback Qt du slider vidéo : change l'index courant et rafraîchit l'image."""

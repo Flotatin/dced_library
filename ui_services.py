@@ -284,7 +284,9 @@ class BackgroundTaskMixin:
         widgets=None,
         timeout_ms: int = 20000,
     ):
+
         worker = TaskRunnable(func)
+
 
         if result_slot is not None:
             worker.signals.result.connect(result_slot)
