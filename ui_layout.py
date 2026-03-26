@@ -297,13 +297,20 @@ class UiLayoutMixin:
 
         self.index_start_entry = QSpinBox()
         self.index_start_entry.setRange(0, 2000)
-        self.index_start_entry.setValue(1)
+        self.index_start_entry.valueChanged.connect(self._on_fit_spin_changed)
         layout.addLayout(creat_spin_label(self.index_start_entry, "Index start"))
 
         self.index_stop_entry = QSpinBox()
         self.index_stop_entry.setRange(0, 2000)
         self.index_stop_entry.setValue(10)
+        self.index_stop_entry.valueChanged.connect(self._on_fit_spin_changed)
         layout.addLayout(creat_spin_label(self.index_stop_entry, "Index stop"))
+
+        self.btn_zone_dpdt = QPushButton("Afficher zone dP/dt")
+        self.btn_zone_dpdt.setCheckable(True)
+        self.btn_zone_dpdt.setChecked(False)
+        self.btn_zone_dpdt.toggled.connect(self.set_ddac_multi_zone_visibility)
+        layout.addWidget(self.btn_zone_dpdt)
 
         self.multi_fit_button = QPushButton("Launch multi fit")
         self.multi_fit_button.clicked.connect(self._CED_multi_fit)

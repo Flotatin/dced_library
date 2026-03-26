@@ -14,10 +14,13 @@ from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QCheckBox,
     QGroupBox,
+    QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
     QPushButton,
+    QListWidget,
     QSlider,
     QSpinBox,
     QVBoxLayout,
@@ -36,6 +39,7 @@ class RunViewState:
     time: list = field(default_factory=list)
     spectre_number: list = field(default_factory=list)
     curves_P: list = field(default_factory=list)
+    curves_P_extrap: list = field(default_factory=list)
     curves_dPdt: list = field(default_factory=list)
     curves_sigma: list = field(default_factory=list)
     curves_T: list = field(default_factory=list)
@@ -47,6 +51,9 @@ class RunViewState:
     index_cam: list = field(default_factory=list)
     correlations: list = field(default_factory=list)
     list_item: Optional[QListWidgetItem] = None
+    pressure_series: list = field(default_factory=list)
+    phase_tracks: dict = field(default_factory=dict)
+    active_phase_element: str = "H2O"
 
 
 class DdacViewMixin:
@@ -149,14 +156,29 @@ class DdacViewMixin:
         self.line_t_dPdt = self._create_marker_line(angle=90)
         self.line_t_sigma = self._create_marker_line(angle=90)
         self.line_p0 = self._create_marker_line(angle=0, pos=0)
+        self.line_t_click_ddac = self._create_marker_line(angle=90)
+        self.line_t_click_ddac.setPen(pg.mkPen((255, 210, 0), width=2, style=Qt.DashLine))
         self.pg_P.addItem(self.line_p0)
         self.pg_P.addItem(self.line_t_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
+        self.pg_dPdt.addItem(self.line_t_click_ddac)
         self.pg_sigma.addItem(self.line_t_sigma)
 
         self.line_nspec = self._create_marker_line(angle=90)
         self.pg_dlambda.addItem(self.line_nspec)
-
+        self.ddac_click_time_label = pg.TextItem(color=(255, 210, 0), anchor=(0, 1))
+        self.pg_dPdt.addItem(self.ddac_click_time_label)
+        self.ddac_click_time_label.hide()
+        self.curve_P_extrap = self.pg_P.plot(
+            [],
+            [],
+            pen=pg.mkPen((80, 255, 120), width=2, style=Qt.DashLine),
+            name="P extrapolée",
+        )
+        self.curve_P_extrap.setZValue(12_500)
+        self._ddac_pressure_ref_time = None
+        self._ddac_pressure_ref_values = None
+        self._ddac_zone_summary_text = ""
 
         self.c_m_base = make_c_m(self.current_theme)
         self.color=[]
@@ -210,6 +232,14 @@ class DdacViewMixin:
         self.dpdt_range_entry.setRange(2, 100)
         self.dpdt_range_entry.setValue(3)
         controls_layout.addWidget(self.dpdt_range_entry)
+        self.phase_patterns_path = os.path.join(os.path.dirname(__file__), "H2O.txt")
+        if not os.path.exists(self.phase_patterns_path):
+            self.phase_patterns_path = os.path.join(os.path.dirname(__file__), "phase_patterns.txt")
+        self.phase_patterns = self._load_phase_patterns(self.phase_patterns_path)
+        self.phase_regions = []
+        self._phase_sync_in_progress = False
+        self.selected_phase_index = None
+        self.selected_phase_template = None
 
         """Crée 2 régions (fit & camera) sur tous les graphes temporels (pas sur le film)."""
 
@@ -219,6 +249,9 @@ class DdacViewMixin:
 
         self._fit_visible = True
         self._cam_visible = True
+        self._ddac_multi_zone_visible = False
+        self._ddac_multi_zone_syncing = False
+        self._ddac_multi_zone_range = None
 
         self._spec_time = None   # np.ndarray : temps des spectres (Time)
         self._cam_time = None    # np.ndarray : temps caméra (t_cam)
@@ -248,7 +281,27 @@ class DdacViewMixin:
             r_cam.sigRegionChanged.connect(partial(self._on_cam_region_changed, r_cam))
             self.cam_regions.append(r_cam)
 
+        self.zone_multi_P = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+        self.zone_multi_P.setBrush(pg.mkBrush(80, 255, 120, 45))
+        self.zone_multi_P.setZValue(11_000)
+        self.zone_multi_P.setVisible(False)
+        self.pg_P.addItem(self.zone_multi_P)
+
+        self.zone_multi_dPdt = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+        self.zone_multi_dPdt.setBrush(pg.mkBrush(80, 255, 120, 45))
+        self.zone_multi_dPdt.setZValue(11_000)
+        self.zone_multi_dPdt.setVisible(False)
+        self.pg_dPdt.addItem(self.zone_multi_dPdt)
+
+        self.zone_multi_diff_int = pg.LinearRegionItem(values=(0.0, 1.0), movable=True)
+        self.zone_multi_diff_int.setBrush(pg.mkBrush(80, 255, 120, 45))
+        self.zone_multi_diff_int.setZValue(11_000)
+        self.zone_multi_diff_int.setVisible(False)
+        self.pg_sigma.addItem(self.zone_multi_diff_int)
+        self._connect_ddac_multi_zone_signals()
+
         layout_graphique.addLayout(controls_layout)
+        layout_graphique.addLayout(self._build_phase_controls())
 
         group_graphique.setLayout(layout_graphique)
 
@@ -257,6 +310,8 @@ class DdacViewMixin:
         # Timer Qt pour le mode "lecture"
         self.timerMovie = QTimer(self)
         self.timerMovie.timeout.connect(self.play_movie)
+    
+    
 
         # Un clic sur n'importe quel graphe temporel aligne les repères, déclenche
         # la sélection spectre/film et met à jour les marqueurs de mesure.
@@ -278,6 +333,126 @@ class DdacViewMixin:
             col_factors=self._ddac_col_factors,
         )
 
+    def _build_phase_controls(self):
+        layout = QVBoxLayout()
+        box = QGroupBox("Phases (expérience)")
+        box_layout = QVBoxLayout()
+
+        top_line = QHBoxLayout()
+        self.phase_visible_box = QCheckBox("Afficher phases")
+        self.phase_visible_box.setChecked(False)
+        self.phase_visible_box.toggled.connect(self._on_phase_visibility_toggled)
+        top_line.addWidget(self.phase_visible_box)
+
+        self.phase_element_selector = QComboBox()
+        self.phase_element_selector.setEditable(False)
+        self.phase_element_selector.addItems(sorted(self.phase_patterns.keys()))
+        if self.phase_element_selector.count() == 0:
+            self.phase_element_selector.addItem("H2O")
+        self.phase_element_selector.currentTextChanged.connect(self._on_phase_element_changed)
+        top_line.addWidget(QLabel("Élément"))
+        top_line.addWidget(self.phase_element_selector)
+        box_layout.addLayout(top_line)
+
+        template_line = QHBoxLayout()
+        template_line.addWidget(QLabel("Phase à ajouter"))
+        self.phase_template_selector = QComboBox()
+        self.phase_template_selector.setEditable(False)
+        self.phase_template_selector.currentTextChanged.connect(self._on_phase_template_changed)
+        template_line.addWidget(self.phase_template_selector)
+        self.phase_file_button = QPushButton("Charger patterns...")
+        self.phase_file_button.clicked.connect(self._choose_phase_pattern_file)
+        template_line.addWidget(self.phase_file_button)
+        box_layout.addLayout(template_line)
+
+        btns = QHBoxLayout()
+        self.phase_auto_btn = QPushButton("Auto (pression)")
+        self.phase_auto_btn.clicked.connect(self._auto_build_phase_track)
+        btns.addWidget(self.phase_auto_btn)
+
+        self.phase_add_btn = QPushButton("Ajouter zone")
+        self.phase_add_btn.clicked.connect(self._add_phase_zone)
+        btns.addWidget(self.phase_add_btn)
+
+        self.phase_remove_btn = QPushButton("Supprimer zone")
+        self.phase_remove_btn.clicked.connect(self._remove_phase_zone)
+        btns.addWidget(self.phase_remove_btn)
+        box_layout.addLayout(btns)
+
+        self.phase_list = QListWidget()
+        self.phase_list.itemSelectionChanged.connect(self._on_phase_selection_changed)
+        box_layout.addWidget(self.phase_list)
+
+        box.setLayout(box_layout)
+        self.phase_group_box = box
+        layout.addWidget(box)
+        self._refresh_phase_templates()
+        self.phase_list.setMaximumHeight(100)
+
+        self.phase_group_box.setMaximumHeight(200)
+        return layout
+
+    def _update_phase_section_height(self):
+        if not hasattr(self, "ddac_group_box") or not hasattr(self, "phase_group_box"):
+            return
+        total_h = self.ddac_group_box.height()
+        if total_h <= 0:
+            total_h = self.ddac_group_box.sizeHint().height()
+        max_h = max(120, int(total_h * 0.20))
+        self.phase_group_box.setMaximumHeight(max_h)
+        self.phase_group_box.setMinimumHeight(min(120, max_h))
+
+    def _load_phase_patterns(self, path=None):
+        patterns = {}
+        if path is None:
+            path = getattr(self, "phase_patterns_path", os.path.join(os.path.dirname(__file__), "phase_patterns.txt"))
+        if not os.path.exists(path):
+            return patterns
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                for part in raw.split("\\n"):
+                    line = part.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if ":" not in line or "[" not in line or "]" not in line:
+                        continue
+                    name_part, range_part = line.split(":", 1)
+                    tokens = name_part.strip().split()
+                    if len(tokens) < 2:
+                        continue
+                    element = tokens[0]
+                    phase_name = " ".join(tokens[1:])
+                    bounds = range_part[range_part.index("[") + 1: range_part.index("]")]
+                    hi, lo = [float(x.strip()) for x in bounds.split(",")]
+                    patterns.setdefault(element, []).append(
+                        {"phase": phase_name, "p_high": hi, "p_low": lo}
+                    )
+        return patterns
+
+    def _phase_color(self, idx):
+        palette = [
+            (66, 135, 245, 50),
+            (52, 168, 83, 50),
+            (251, 188, 5, 55),
+            (234, 67, 53, 50),
+            (171, 71, 188, 50),
+            (0, 172, 193, 50),
+        ]
+        return palette[idx % len(palette)]
+
+    def _phase_color_for_name(self, phase_name: str, element: Optional[str] = None):
+        if element is None:
+            element = self.phase_element_selector.currentText().strip() if hasattr(self, "phase_element_selector") else "H2O"
+        ordered_names = self._phase_names_for_element(element) if hasattr(self, "_phase_names_for_element") else []
+        if phase_name in ordered_names:
+            idx = ordered_names.index(phase_name)
+        else:
+            idx = abs(hash(phase_name)) % 6
+        return self._phase_color(idx)
+
+        
+        
+     
     def _recolor_all_runs(self):
         self.c_m_base = make_c_m(self.current_theme)  
         for run_id, state in self.runs.items():
@@ -350,6 +525,23 @@ class DdacViewMixin:
         if self._block_fit:
             return
         self._apply_fit_from_spin()
+        self._update_ddac_multi_zone_range()
+
+    def _effective_dpdt_window(self, size: int) -> int:
+        window = int(self.dpdt_range_entry.value()) if hasattr(self, "dpdt_range_entry") else 3
+        if window < 3:
+            window = 3
+        if window % 2 == 0:
+            window += 1
+        if window > size:
+            window = size if size % 2 == 1 else max(3, size - 1)
+        return max(3, window)
+
+    def _on_dpdt_window_changed(self, *_):
+        state = self._get_state_for_run()
+        if state is not None and self.RUN is not None:
+            self._update_curves_for_run(state)
+        self._update_ddac_zone_annotations()
 
     def _apply_fit_from_spin(self):
         """index_start/index_stop (indices) -> FitRegion (temps)."""
@@ -373,6 +565,7 @@ class DdacViewMixin:
         for r in self.fit_regions:
             r.setRegion((t0, t1))
         self._block_fit = False
+        self._update_ddac_multi_zone_range()
 
 
         # -------------------------
@@ -411,6 +604,225 @@ class DdacViewMixin:
             self.index_stop_entry.blockSignals(False)
 
         self._block_fit = False
+        self._update_ddac_multi_zone_range()
+
+    def _compute_ddac_multi_zone_range(self):
+        if not hasattr(self, "index_start_entry") or not hasattr(self, "index_stop_entry"):
+            return None
+
+        start_index = int(self.index_start_entry.value())
+        stop_index = int(self.index_stop_entry.value())
+        if start_index > stop_index:
+            start_index, stop_index = stop_index, start_index
+
+        time_values = self._spec_time
+        if time_values is None or len(time_values) == 0:
+            start_time = float(start_index)
+            stop_time = float(stop_index)
+            if start_time == stop_time:
+                stop_time = start_time + 1.0
+            return (start_time, stop_time)
+
+        start_index = int(np.clip(start_index, 0, len(time_values) - 1))
+        stop_index = int(np.clip(stop_index, 0, len(time_values) - 1))
+        start_time = float(time_values[start_index])
+
+        if stop_index + 1 < len(time_values):
+            stop_time = float(time_values[stop_index + 1])
+        else:
+            stop_time = float(time_values[stop_index])
+            if len(time_values) >= 2:
+                stop_time += float(time_values[-1] - time_values[-2])
+            else:
+                stop_time += 1.0
+
+        if start_time > stop_time:
+            start_time, stop_time = stop_time, start_time
+        return (start_time, stop_time)
+
+    def _update_ddac_multi_zone_range(self) -> None:
+        if self._ddac_multi_zone_syncing:
+            return
+
+        zone_range = self._compute_ddac_multi_zone_range()
+        self._ddac_multi_zone_range = zone_range
+        if zone_range is None:
+            return
+        for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+            zone = getattr(self, attr, None)
+            if zone is not None:
+                zone.setRegion(zone_range)
+        self._update_ddac_zone_annotations()
+
+    def _apply_ddac_multi_zone_visibility(self) -> None:
+        visible = bool(self._ddac_multi_zone_visible)
+        for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+            zone = getattr(self, attr, None)
+            if zone is not None:
+                zone.setVisible(visible)
+        if not visible and hasattr(self, "curve_P_extrap"):
+            self._update_curve_safe(self.curve_P_extrap, [], [])
+            self._ddac_zone_summary_text = ""
+
+    def set_ddac_multi_zone_visibility(self, checked: bool) -> None:
+        checked = bool(checked)
+        self._ddac_multi_zone_visible = checked
+        self._update_ddac_multi_zone_range()
+        self._apply_ddac_multi_zone_visibility()
+        self._update_ddac_zone_annotations()
+
+        btn = getattr(self, "btn_zone_dpdt", None)
+        if btn is not None and bool(btn.isChecked()) != checked:
+            btn.blockSignals(True)
+            btn.setChecked(checked)
+            btn.blockSignals(False)
+
+    def _connect_ddac_multi_zone_signals(self) -> None:
+        for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+            zone = getattr(self, attr, None)
+            if zone is None:
+                continue
+            zone.sigRegionChangeFinished.connect(self._on_ddac_multi_zone_changed)
+
+    def _on_ddac_multi_zone_changed(self) -> None:
+        if self._ddac_multi_zone_syncing:
+            return
+        sender = self.sender()
+        region = sender.getRegion() if sender is not None and hasattr(sender, "getRegion") else None
+        if region is None:
+            return
+
+        start, stop = sorted(map(float, region))
+        self._ddac_multi_zone_range = (start, stop)
+        self._ddac_multi_zone_syncing = True
+        try:
+            for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+                zone = getattr(self, attr, None)
+                if zone is None or zone is sender:
+                    continue
+                zone.setRegion((start, stop))
+
+            start_index, stop_index = self._indices_from_ddac_range(start, stop)
+            self._set_batch_indices_from_zone(start_index, stop_index)
+            self._update_ddac_zone_annotations()
+        finally:
+            self._ddac_multi_zone_syncing = False
+
+    def _indices_from_ddac_range(self, start: float, stop: float):
+        time_values = self._spec_time
+        if time_values is None or len(time_values) == 0:
+            start_index = int(round(start))
+            stop_index = int(round(stop))
+            return (min(start_index, stop_index), max(start_index, stop_index))
+
+        time_array = np.asarray(time_values, dtype=float)
+        start_index = int(np.nanargmin(np.abs(time_array - start)))
+        stop_index = int(np.nanargmin(np.abs(time_array - stop)))
+        return (min(start_index, stop_index), max(start_index, stop_index))
+
+    def _set_batch_indices_from_zone(self, start_index: int, stop_index: int) -> None:
+        if start_index > stop_index:
+            start_index, stop_index = stop_index, start_index
+        if hasattr(self, "index_start_entry"):
+            self.index_start_entry.blockSignals(True)
+            self.index_start_entry.setValue(start_index)
+            self.index_start_entry.blockSignals(False)
+        if hasattr(self, "index_stop_entry"):
+            self.index_stop_entry.blockSignals(True)
+            self.index_stop_entry.setValue(stop_index)
+            self.index_stop_entry.blockSignals(False)
+
+    def _get_reference_pressure_series(self):
+        t = np.asarray(getattr(self, "_ddac_pressure_ref_time", []), dtype=float)
+        p = np.asarray(getattr(self, "_ddac_pressure_ref_values", []), dtype=float)
+        if t.size < 2 or p.size != t.size:
+            state = self._get_state_for_run()
+            if state is None or not state.curves_P or state.curves_P[0] is None:
+                return None, None
+            x_data, y_data = state.curves_P[0].getData()
+            if x_data is None or y_data is None:
+                return None, None
+            t = np.asarray(x_data, dtype=float)
+            p = np.asarray(y_data, dtype=float)
+        mask = np.isfinite(t) & np.isfinite(p)
+        t = t[mask]
+        p = p[mask]
+        if t.size < 2:
+            return None, None
+        order = np.argsort(t)
+        return t[order], p[order]
+
+    def _compute_ddac_zone_pressure_stats(self):
+        zone = self._ddac_multi_zone_range
+        if not zone:
+            return None
+        t, p = self._get_reference_pressure_series()
+        if t is None or p is None:
+            return None
+        t0, t1 = sorted(map(float, zone))
+        if t1 <= t0:
+            return None
+        p0 = float(np.interp(t0, t, p))
+        p1 = float(np.interp(t1, t, p))
+        dt_s = float(t1 - t0)
+        dt_ms = dt_s * 1e3
+        dp = float(p1 - p0)
+        dpdt_int = float(dp / dt_ms) if dt_ms != 0 else np.nan
+        return {"t0": t0, "t1": t1, "p0": p0, "p1": p1, "dt_ms": dt_ms, "dp": dp, "dpdt_int": dpdt_int}
+
+    def _build_extrapolated_pressure_curve(self, t0: float, t1: float, p0: float):
+        t_ref, p_ref = self._get_reference_pressure_series()
+        if t_ref is None or p_ref is None or t_ref.size < 2:
+            return np.array([t0, t1], dtype=float), np.array([p0, p0], dtype=float)
+
+        if p_ref.size >= 5:
+            win = self._effective_dpdt_window(p_ref.size)
+            if win < p_ref.size:
+                p_ref = CL.savgol_filter(p_ref, win, 1)
+        t_ref_ms = t_ref * 1e3
+        dpdt_ref = np.gradient(p_ref, t_ref_ms, edge_order=1)
+        t_dense = np.linspace(t0, t1, 200)
+        y_dense = np.interp(t_dense, t_ref, dpdt_ref)
+        t_dense_ms = t_dense * 1e3
+        cumulative = np.zeros_like(t_dense_ms)
+        if t_dense_ms.size > 1:
+            cumulative[1:] = np.cumsum(0.5 * (y_dense[1:] + y_dense[:-1]) * np.diff(t_dense_ms))
+        p_extrap = p0 + cumulative
+        return t_dense, p_extrap
+
+    def _update_ddac_zone_annotations(self) -> None:
+        visible = bool(self._ddac_multi_zone_visible)
+        stats = self._compute_ddac_zone_pressure_stats() if visible else None
+        if stats is None:
+            if hasattr(self, "curve_P_extrap"):
+                self._update_curve_safe(self.curve_P_extrap, [], [])
+            self._ddac_zone_summary_text = ""
+            state = self._get_state_for_run()
+            current_t = state.t_cam[self.current_index] if state is not None and state.t_cam else 0.0
+            self.f_text_CEDd_print(current_t)
+            return
+
+        t0, t1 = stats["t0"], stats["t1"]
+        p0 = stats["p0"]
+        t_extrap, p_extrap = self._build_extrapolated_pressure_curve(t0, t1, p0)
+        self._update_curve_safe(self.curve_P_extrap, t_extrap, p_extrap)
+
+        p1_extrap = float(p_extrap[-1]) if p_extrap.size else stats["p1"]
+        dp_extrap = p1_extrap - p0
+        dpdt_extrap = float(dp_extrap / stats["dt_ms"]) if stats["dt_ms"] != 0 else np.nan
+
+        self._ddac_zone_summary_text = (
+            "Zone dP/dt\n"
+            f"P début: {p0:.3f} GPa\n"
+            f"P fin (extrap): {p1_extrap:.3f} GPa\n"
+            f"Δt: {stats['dt_ms']:.2f} ms\n"
+            f"ΔP (extrap): {dp_extrap:.3f} GPa\n"
+            f"∫dP/dt dt: {dp_extrap:.3f} GPa\n"
+            f"dP/dt int: {dpdt_extrap:.4f} GPa/ms"
+        )
+        state = self._get_state_for_run()
+        current_t = state.t_cam[self.current_index] if state is not None and state.t_cam else 0.0
+        self.f_text_CEDd_print(current_t)
 
     def _apply_cam_from_zone_movie(self):
         """zone_movie (t0,t1) -> CamRegion (temps)."""
@@ -516,6 +928,7 @@ class DdacViewMixin:
             self.attach_spectrum_time(time_array=state.time)
 
             self._apply_fit_from_spin()
+            self._update_ddac_zone_annotations()
 
 
         self._update_movie_frame()
@@ -534,6 +947,332 @@ class DdacViewMixin:
         self.LOAD_Spectrum()
         self.bit_bypass = False
         self.Update_Print()
+        self._reload_phase_ui_from_state()
+
+    def _sync_phase_state_to_run(self, state: Optional[RunViewState] = None):
+        state = state or self._get_state_for_run()
+        if state is None or self.RUN is None:
+            return
+        state.active_phase_element = self.phase_element_selector.currentText().strip() or "H2O"
+        setattr(self.RUN, "phase_tracks", copy.deepcopy(state.phase_tracks))
+        setattr(self.RUN, "active_phase_element", state.active_phase_element)
+
+    def _reload_phase_ui_from_state(self):
+        state = self._get_state_for_run()
+        if state is None:
+            self.phase_list.clear()
+            self._clear_phase_regions()
+            return
+
+        state.phase_tracks = copy.deepcopy(getattr(self.RUN, "phase_tracks", getattr(state, "phase_tracks", {})))
+        state.active_phase_element = getattr(self.RUN, "active_phase_element", state.active_phase_element or "H2O")
+
+        if state.active_phase_element:
+            self.phase_element_selector.blockSignals(True)
+            if self.phase_element_selector.findText(state.active_phase_element) < 0:
+                self.phase_element_selector.addItem(state.active_phase_element)
+            self.phase_element_selector.setCurrentText(state.active_phase_element)
+            self.phase_element_selector.blockSignals(False)
+        self._refresh_phase_templates()
+        self._refresh_phase_list()
+        self._render_phase_regions()
+
+    def _refresh_phase_list(self):
+        self.phase_list.blockSignals(True)
+        self.phase_list.clear()
+        state = self._get_state_for_run()
+        if state is None:
+            self.phase_list.blockSignals(False)
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        for zone in zones:
+            item = QListWidgetItem(f"{zone['name']} [{zone['start']:.3f}, {zone['end']:.3f}] s")
+            r, g, b, a = self._phase_color_for_name(zone["name"], element)
+            item.setBackground(QColor(r, g, b, min(180, a + 80)))
+            item.setForeground(QColor("#ffffff" if self.current_theme == "dark" else "#000000"))
+            self.phase_list.addItem(item)
+        if len(zones) == 0:
+            for tpl in self._phase_names_for_element(element):
+                item = QListWidgetItem(f"Template: {tpl} [à définir]")
+                r, g, b, a = self._phase_color_for_name(tpl, element)
+                item.setBackground(QColor(r, g, b, min(140, a + 60)))
+                item.setForeground(QColor("#ffffff" if self.current_theme == "dark" else "#000000"))
+                self.phase_list.addItem(item)
+        self.phase_list.blockSignals(False)
+
+    def _phase_names_for_element(self, element):
+        return [row["phase"] for row in self.phase_patterns.get(element, [])]
+
+    def _refresh_phase_templates(self):
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        names = self._phase_names_for_element(element)
+        self.phase_template_selector.blockSignals(True)
+        self.phase_template_selector.clear()
+        self.phase_template_selector.addItems(names)
+        self.phase_template_selector.blockSignals(False)
+        self.selected_phase_template = self.phase_template_selector.currentText().strip() if names else None
+        self._update_add_phase_button_label()
+
+    def _update_add_phase_button_label(self):
+        phase_name = (self.selected_phase_template or "").strip()
+        if phase_name:
+            self.phase_add_btn.setText(f"Ajouter zone: {phase_name}")
+        else:
+            self.phase_add_btn.setText("Ajouter zone")
+
+    def _on_phase_template_changed(self, text):
+        self.selected_phase_template = text.strip() or None
+        self._update_add_phase_button_label()
+
+    def _choose_phase_pattern_file(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choisir un fichier de patterns de phases",
+            os.path.dirname(getattr(self, "phase_patterns_path", "")) or ".",
+            "Text files (*.txt);;All files (*)",
+        )
+        if not filename:
+            return
+        loaded = self._load_phase_patterns(filename)
+        if not loaded:
+            self.text_box_msg.setText("Aucun pattern valide trouvé dans le fichier sélectionné.")
+            return
+        self.phase_patterns_path = filename
+        self.phase_patterns = loaded
+        current_element = self.phase_element_selector.currentText().strip() or "H2O"
+        self.phase_element_selector.blockSignals(True)
+        self.phase_element_selector.clear()
+        self.phase_element_selector.addItems(sorted(self.phase_patterns.keys()))
+        if self.phase_element_selector.findText(current_element) >= 0:
+            self.phase_element_selector.setCurrentText(current_element)
+        self.phase_element_selector.blockSignals(False)
+        self._refresh_phase_templates()
+        self._refresh_phase_list()
+        self.text_box_msg.setText(f"Patterns chargés: {os.path.basename(filename)}")
+
+    def _clear_phase_regions(self):
+        for reg in getattr(self, "phase_regions", []):
+            try:
+                self.pg_P.removeItem(reg)
+            except Exception:
+                pass
+        self.phase_regions = []
+
+    def _render_phase_regions(self):
+        self._clear_phase_regions()
+        if not self.phase_visible_box.isChecked():
+            return
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        for idx, zone in enumerate(zones):
+            reg = pg.LinearRegionItem(values=(zone["start"], zone["end"]), movable=True)
+            reg.setBrush(pg.mkBrush(*self._phase_color_for_name(zone["name"], element)))
+            self._set_region_pen(reg, pg.mkPen(255, 255, 255, 110, width=1))
+            reg.setZValue(8_500 + idx)
+            reg.sigRegionChangeFinished.connect(partial(self._on_phase_region_changed, idx=idx))
+            self.pg_P.addItem(reg)
+            self.phase_regions.append(reg)
+        self._apply_phase_selection_visuals()
+
+    def _on_phase_visibility_toggled(self, _checked):
+        self._refresh_phase_list()
+        self._render_phase_regions()
+
+    def _on_phase_element_changed(self, text):
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        if text and self.phase_element_selector.findText(text) < 0:
+            self.phase_element_selector.addItem(text)
+        state.active_phase_element = text or "H2O"
+        self._refresh_phase_templates()
+        self._refresh_phase_list()
+        self._render_phase_regions()
+        self._sync_phase_state_to_run(state)
+
+    def _on_phase_selection_changed(self):
+        self.selected_phase_index = self.phase_list.currentRow()
+        item = self.phase_list.currentItem()
+        if item is not None:
+            txt = item.text()
+            if txt.startswith("Template: "):
+                self.selected_phase_template = txt.replace("Template: ", "").split("[", 1)[0].strip()
+                if self.phase_template_selector.findText(self.selected_phase_template) >= 0:
+                    self.phase_template_selector.setCurrentText(self.selected_phase_template)
+                self._update_add_phase_button_label()
+        self._apply_phase_selection_visuals()
+
+    def _set_region_pen(self, region, pen):
+        for line in getattr(region, "lines", []):
+            line.setPen(pen)
+
+    def _apply_phase_selection_visuals(self):
+        for idx, reg in enumerate(getattr(self, "phase_regions", [])):
+            if idx == self.selected_phase_index:
+                self._set_region_pen(reg, pg.mkPen(255, 255, 255, 220, width=2))
+                reg.setZValue(100)
+            else:
+                self._set_region_pen(reg, pg.mkPen(255, 255, 255, 110, width=1))
+
+    def _select_phase_at_time(self, t_value: float):
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        for idx, zone in enumerate(zones):
+            if zone["start"] <= t_value <= zone["end"]:
+                self.phase_list.setCurrentRow(idx)
+                self.selected_phase_index = idx
+                self._apply_phase_selection_visuals()
+                return
+
+    def _next_available_phase_name(self, element, zones):
+        names = self._phase_names_for_element(element)
+        if not names:
+            return f"Phase {len(zones) + 1}"
+        used = {z["name"] for z in zones}
+        if self.selected_phase_template in names and self.selected_phase_template not in used:
+            return self.selected_phase_template
+        for name in names:
+            if name not in used:
+                return name
+        return names[-1]
+
+    def _ensure_time_pressure_for_phases(self, state: RunViewState) -> bool:
+        """Garantit la disponibilité de time + pression pour la génération auto des phases."""
+        if len(state.time) > 0 and len(state.pressure_series) > 0:
+            return True
+        if self.RUN is None:
+            return False
+        try:
+            (
+                l_P,
+                _l_sigma_P,
+                _l_lambda,
+                _l_fwhm,
+                _l_spe,
+                _l_T,
+                _l_sigma_T,
+                Time,
+                _spectre_number,
+                _time_amp,
+                _amp,
+                _Gauges_RUN,
+            ) = self.Read_RUN(self.RUN)
+        except Exception as exc:
+            self.text_box_msg.setText(f"Erreur lecture RUN pour phases auto: {exc}")
+            return False
+
+        state.time = Time if Time is not None else []
+        state.pressure_series = l_P if l_P is not None else []
+        return len(state.time) > 0 and len(state.pressure_series) > 0
+
+    def _auto_build_phase_track(self):
+        state = self._get_state_for_run()
+        if state is None:
+            self.text_box_msg.setText("Impossible: aucun run sélectionné.")
+            return
+        if not self._ensure_time_pressure_for_phases(state):
+            self.text_box_msg.setText("Impossible: pas de données temps/pression pour générer des phases.")
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        patterns = self.phase_patterns.get(element, [])
+        if not patterns:
+            self.text_box_msg.setText(f"Aucun pattern chargé pour {element}.")
+            return
+
+        time = np.asarray(state.time, dtype=float)
+        pressure = np.asarray(state.pressure_series[0], dtype=float)
+        n = min(len(time), len(pressure))
+        if n < 2:
+            return
+        time = time[:n]
+        pressure = pressure[:n]
+
+        def phase_for_p(p):
+            for row in patterns:
+                pmax = max(row["p_high"], row["p_low"])
+                pmin = min(row["p_high"], row["p_low"])
+                if pmin <= p <= pmax:
+                    return row["phase"]
+            return None
+
+        zones = []
+        current_name = phase_for_p(pressure[0])
+        start = time[0]
+        for i in range(1, n):
+            name = phase_for_p(pressure[i])
+            if name != current_name:
+                if current_name is not None:
+                    zones.append({"name": current_name, "start": float(start), "end": float(time[i])})
+                start = time[i]
+                current_name = name
+        if current_name is not None:
+            zones.append({"name": current_name, "start": float(start), "end": float(time[-1])})
+
+        state.phase_tracks[element] = zones
+        state.active_phase_element = element
+        self._refresh_phase_list()
+        self._render_phase_regions()
+        self._sync_phase_state_to_run(state)
+
+    def _add_phase_zone(self):
+        state = self._get_state_for_run()
+        if state is None or len(state.time) == 0:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.setdefault(element, [])
+        t0, t1 = float(min(state.time)), float(max(state.time))
+        phase_name = self._next_available_phase_name(element, zones)
+        self.selected_phase_template = phase_name
+        new_zone = {"name": phase_name, "start": t0, "end": t1}
+        zones.append(new_zone)
+        zones.sort(key=lambda z: z["start"])
+        self._refresh_phase_list()
+        self.phase_list.setCurrentRow(len(zones) - 1)
+        self._render_phase_regions()
+        self._sync_phase_state_to_run(state)
+
+    def _remove_phase_zone(self):
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        idx = self.phase_list.currentRow()
+        if idx < 0 or idx >= len(zones):
+            return
+        del zones[idx]
+        self._refresh_phase_list()
+        self._render_phase_regions()
+        self._sync_phase_state_to_run(state)
+
+    def _on_phase_region_changed(self, region, idx):
+        if self._phase_sync_in_progress:
+            return
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        if idx >= len(zones):
+            return
+        start, end = region.getRegion()
+        zones[idx]["start"] = float(min(start, end))
+        zones[idx]["end"] = float(max(start, end))
+        zones.sort(key=lambda z: z["start"])
+        self._phase_sync_in_progress = True
+        try:
+            self._refresh_phase_list()
+            self._render_phase_regions()
+        finally:
+            self._phase_sync_in_progress = False
+        self._sync_phase_state_to_run(state)
 
     def _ensure_curve_at(self, curve_list, index, plot_widget, **plot_kwargs):
         """Garantit la présence d'une courbe à l'index donné et la retourne."""
@@ -703,6 +1442,7 @@ class DdacViewMixin:
 
         state.time = Time
         state.spectre_number = spectre_number
+        state.pressure_series = l_P
 
         for i, G in enumerate(Gauges_RUN):
             l_p_filtre = CL.savgol_filter(l_P[i], self.dpdt_range_entry.value(), 1) if len(l_P[i]) > 0 else np.array([])
@@ -732,6 +1472,10 @@ class DdacViewMixin:
 
             curve_sigma = self._ensure_curve_at(state.curves_sigma, i, self.pg_sigma, **curve_kwargs)
             self._update_curve_safe(curve_sigma, Time, l_fwhm[i])
+        
+        if len(l_P) > 0 and len(Time) == len(l_P[0]):
+            self._ddac_pressure_ref_time = np.asarray(Time, dtype=float)
+            self._ddac_pressure_ref_values = np.asarray(l_P[0], dtype=float)
 
         has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
         if has_T:
@@ -772,8 +1516,11 @@ class DdacViewMixin:
                 self._update_curve_safe(state.corr_curve, state.t_cam, state.correlations)
             else:
                 self._update_curve_safe(state.corr_curve, [], [])
-
+        self._update_ddac_zone_annotations()
         self._refresh_ddac_limits(state)
+        if self.phase_visible_box.isChecked():
+            self._render_phase_regions()
+
 
     def _compute_movie_metrics(self, cap, nb_frames, fps, t0_movie, time_axis, with_corr=False, nb_c=5):
         t_cam = []
@@ -910,6 +1657,8 @@ class DdacViewMixin:
         color_idx = len(self.runs)
 
         state = RunViewState(ced=self.RUN, color_idx=color_idx)
+        state.phase_tracks = copy.deepcopy(getattr(self.RUN, "phase_tracks", {}))
+        state.active_phase_element = getattr(self.RUN, "active_phase_element", "H2O")
         c = self._get_run_color(state)
 
 
@@ -922,6 +1671,9 @@ class DdacViewMixin:
 
         # Lecture des données CEDd
         l_P, l_sigma_P, l_lambda, l_fwhm, l_spe, l_T, l_sigma_T, Time, spectre_number, time_amp, amp, Gauges_RUN = self.Read_RUN(self.RUN)
+        if len(l_P) > 0 and len(Time) == len(l_P[0]):
+            self._ddac_pressure_ref_time = np.asarray(Time, dtype=float)
+            self._ddac_pressure_ref_values = np.asarray(l_P[0], dtype=float)
 
         # Axes temps
         self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
@@ -1030,6 +1782,8 @@ class DdacViewMixin:
             f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
             f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
             )
+        if self._ddac_zone_summary_text:
+            txt = f"{txt}\n\n{self._ddac_zone_summary_text}"
         self.pg_text_label.setText(txt)
 
     def f_CEDd_update_print(self):
@@ -1166,6 +1920,15 @@ class DdacViewMixin:
         y = mouse_point.y()
 
         self._update_ddac_markers(which, x, y)
+        if which == "P":
+            self._select_phase_at_time(x)
+
+        if hasattr(self, "line_t_click_ddac"):
+            self.line_t_click_ddac.setPos(x)
+        if hasattr(self, "ddac_click_time_label"):
+            self.ddac_click_time_label.setText(f"t = {x*1e3:.3f} ms")
+            self.ddac_click_time_label.setPos(x, y)
+            self.ddac_click_time_label.show()
 
         state = self._get_state_for_run()
         self._sync_movie_after_click(state)
@@ -1186,7 +1949,7 @@ class DdacViewMixin:
         associée est rappelée via `line_nspec` et le texte d'info.
         """
         state = self._get_state_for_run()
-        if state is None or not state.index_cam:
+        if state is None or len(state.index_cam) == 0:
             return
 
         idx_list = state.index_cam
@@ -1211,12 +1974,9 @@ class DdacViewMixin:
             nspec = state.spectre_number[self.current_index]
             self.line_nspec.setPos(nspec)
 
-        # Texte
-        txt = (
-            f"t = {t*1e3:.3f} ms\n"
-            f"frame = {frame_idx}"
-        )
-        self.pg_text_label.setText(txt)
+        # Texte (inclut aussi le buffer de zone dP/dt si actif)
+        self.Num_im = frame_idx
+        self.f_text_CEDd_print(t)
 
     def previous_image(self):
         if self.current_index > 0:
