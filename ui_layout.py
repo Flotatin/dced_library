@@ -316,6 +316,13 @@ class UiLayoutMixin:
         self.multi_fit_button.clicked.connect(self._CED_multi_fit)
         layout.addWidget(self.multi_fit_button)
 
+        self.chk_multi_fit_fast = QCheckBox("Fast multi fit (no spectrum UI refresh)")
+        self.chk_multi_fit_fast.setChecked(False)
+        self.chk_multi_fit_fast.setToolTip(
+            "Accélère le multi-fit en limitant les mises à jour de l'UI Spectrum pendant la boucle."
+        )
+        layout.addWidget(self.chk_multi_fit_fast)
+
         # Enfin : ajout de l’onglet dans le QTabWidget
         self.tools_tabs.addTab(self.tab_gauge, "Gauge & Peak")
 
@@ -428,13 +435,40 @@ class UiLayoutMixin:
         self.fit_start_box.stateChanged.connect(self.Print_fit_start)
         layout_boutons.addWidget(self.fit_start_box)
 
-        self.var_bouton = []
-        for i, valeur in enumerate(self.valeurs_boutons):
-            var = QCheckBox(self.name_boutons[i], self)
-            var.setChecked(valeur)
-            var.stateChanged.connect(self.Update_Print)
-            self.var_bouton.append(var)
-            layout_boutons.addWidget(var)
+        self.chk_show_dpdt = QCheckBox("dP\\dt", self)
+        self.chk_show_dpdt.setChecked(True)
+        self.chk_show_dpdt.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_dpdt)
+
+        self.chk_show_T = QCheckBox("T", self)
+        self.chk_show_T.setChecked(True)
+        self.chk_show_T.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_T)
+
+        self.chk_show_piezo = QCheckBox("Piézo", self)
+        self.chk_show_piezo.setChecked(True)
+        self.chk_show_piezo.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_piezo)
+
+        self.chk_show_corr = QCheckBox("Image Correlation", self)
+        self.chk_show_corr.setChecked(False)
+        self.chk_show_corr.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_corr)
+
+        self.chk_show_m2r = QCheckBox("M2R", self)
+        self.chk_show_m2r.setChecked(True)
+        self.chk_show_m2r.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_m2r)
+
+        self.chk_use_movie = QCheckBox("use Movie file", self)
+        self.chk_use_movie.setChecked(True)
+        self.chk_use_movie.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_use_movie)
+
+        self.chk_show_P = QCheckBox("print P", self)
+        self.chk_show_P.setChecked(True)
+        self.chk_show_P.stateChanged.connect(self.Update_Print)
+        layout_boutons.addWidget(self.chk_show_P)
 
         self.tools_tabs.addTab(self.tab_tools_checks, "Tools & Check")
 
