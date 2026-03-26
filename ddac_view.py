@@ -155,20 +155,22 @@ class DdacViewMixin:
         self.line_t_P = self._create_marker_line(angle=90)
         self.line_t_dPdt = self._create_marker_line(angle=90)
         self.line_t_sigma = self._create_marker_line(angle=90)
+
+        self.line_t_spec_P = self._create_marker_line(angle=90)
+        self.line_t_spec_dPdt = self._create_marker_line(angle=90)
+        self.line_t_spec_sigma = self._create_marker_line(angle=90)
+
         self.line_p0 = self._create_marker_line(angle=0, pos=0)
-        self.line_t_click_ddac = self._create_marker_line(angle=90)
-        self.line_t_click_ddac.setPen(pg.mkPen((255, 210, 0), width=2, style=Qt.DashLine))
         self.pg_P.addItem(self.line_p0)
         self.pg_P.addItem(self.line_t_P)
+        self.pg_P.addItem(self.line_t_spec_P)
         self.pg_dPdt.addItem(self.line_t_dPdt)
-        self.pg_dPdt.addItem(self.line_t_click_ddac)
+        self.pg_dPdt.addItem(self.line_t_spec_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
+        self.pg_sigma.addItem(self.line_t_spec_sigma)
 
         self.line_nspec = self._create_marker_line(angle=90)
         self.pg_dlambda.addItem(self.line_nspec)
-        self.ddac_click_time_label = pg.TextItem(color=(255, 210, 0), anchor=(0, 1))
-        self.pg_dPdt.addItem(self.ddac_click_time_label)
-        self.ddac_click_time_label.hide()
         self.curve_P_extrap = self.pg_P.plot(
             [],
             [],
@@ -209,6 +211,10 @@ class DdacViewMixin:
         self.correlations = []
         self.time = []
         self.spectre_number = []
+        self.selected_spec_time = None
+        self.selected_frame_time = None
+        self._last_ddac_click_time = None
+        self._last_ddac_click_target = None
 
         # ================== INTÉGRATION WIDGET GRAPHIQUE ==================
         layout_graphique.addWidget(self.pg_ddac)
@@ -335,7 +341,7 @@ class DdacViewMixin:
 
     def _build_phase_controls(self):
         layout = QVBoxLayout()
-        box = QGroupBox("Phases (expérience)")
+        box = QGroupBox("DAC Element")
         box_layout = QVBoxLayout()
 
         top_line = QHBoxLayout()
@@ -355,7 +361,6 @@ class DdacViewMixin:
         box_layout.addLayout(top_line)
 
         template_line = QHBoxLayout()
-        template_line.addWidget(QLabel("Phase à ajouter"))
         self.phase_template_selector = QComboBox()
         self.phase_template_selector.setEditable(False)
         self.phase_template_selector.currentTextChanged.connect(self._on_phase_template_changed)
@@ -892,6 +897,12 @@ class DdacViewMixin:
             # Copie profonde indispensable ici : on doit pouvoir revenir à l'état
             # précédent d'un RUN lorsque l'utilisateur change d'onglet.
             state.ced = copy.deepcopy(self.RUN)
+            if getattr(state, "cap", None) is not None:
+                try:
+                    state.cap.release()
+                except Exception:
+                    pass
+                state.cap = None
 
     def _finalize_run_selection(self, state: RunViewState, name_select: str):
         self.CLEAR_ALL()
@@ -909,6 +920,13 @@ class DdacViewMixin:
                 text_fps="Movie :"+str(round(self.RUN.fps,2))+"fps"
         else:
             text_fps="No Movie"
+
+        if state.cap is None and getattr(state.ced, "folder_Movie", None):
+            try:
+                cap, _fps, _nb = self.Read_Movie(state.ced)
+                state.cap = cap
+            except Exception:
+                state.cap = None
 
         if state.index_cam is not None and len(state.index_cam)>0:
             self.current_index = len(state.index_cam) // 2
@@ -1406,15 +1424,57 @@ class DdacViewMixin:
 
     def REFRESH(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
-        self.RUN.Corr_Summary(All=True)
+        if hasattr(self, "_mark_summary_dirty") and hasattr(self, "_flush_summary_dirty"):
+            self._mark_summary_dirty(self.index_spec)
+            self._flush_summary_dirty()
+        elif hasattr(self, "_corr_summary_for_specs"):
+            self._corr_summary_for_specs(self.index_spec)
+        else:
+            self.RUN.Corr_Summary(num_spec=self.index_spec, All=False)
         state = self._get_state_for_run()
         if state is None:
             self.text_box_msg.setText("Aucun état RunViewState pour rafraîchir ce CEDd")
             return
 
-        # Pas de deepcopy ici : on consomme immédiatement les données pour le refresh
-        state.ced = self.RUN
-        self._update_curves_for_run(state)
+        run_snapshot = copy.deepcopy(self.RUN)
+        request_id = int(getattr(self, "_refresh_request_counter", 0)) + 1
+        self._refresh_request_counter = request_id
+        self._active_refresh_request_id = request_id
+        run_id = self.current_run_id
+
+        self._submit_background_task(
+            lambda: {
+                "request_id": request_id,
+                "run_id": run_id,
+                "run_snapshot": run_snapshot,
+                "refresh_data": self.Read_RUN(run_snapshot),
+            },
+            result_slot=self._on_refresh_data_ready,
+            description="Rafraîchissement courbes dDAC…",
+        )
+
+    @pyqtSlot(object)
+    def _on_refresh_data_ready(self, payload):
+        if not payload:
+            return
+        request_id = payload.get("request_id")
+        if request_id != getattr(self, "_active_refresh_request_id", None):
+            return
+
+        run_id = payload.get("run_id")
+        state = self.runs.get(run_id)
+        if state is None:
+            return
+
+        run_snapshot = payload.get("run_snapshot")
+        refresh_data = payload.get("refresh_data")
+        if run_snapshot is None or refresh_data is None:
+            return
+
+        state.ced = run_snapshot
+        if run_id == self.current_run_id:
+            self.RUN = run_snapshot
+        self._update_curves_for_run_data(state, refresh_data, run_source=run_snapshot)
 
     def _update_curves_for_run(self, state: RunViewState):
         """Met à jour les courbes PyQtGraph à partir des données d'un `RunViewState`.
@@ -1425,6 +1485,10 @@ class DdacViewMixin:
         tracés sont actualisés sans recréer d'objets graphiques.
         """
 
+        refresh_data = self.Read_RUN(self.RUN)
+        self._update_curves_for_run_data(state, refresh_data, run_source=self.RUN)
+
+    def _update_curves_for_run_data(self, state: RunViewState, refresh_data, run_source):
         (
             l_P,
             l_sigma_P,
@@ -1438,7 +1502,7 @@ class DdacViewMixin:
             time_amp,
             amp,
             Gauges_RUN,
-        ) = self.Read_RUN(self.RUN)
+        ) = refresh_data
 
         state.time = Time
         state.spectre_number = spectre_number
@@ -1477,7 +1541,7 @@ class DdacViewMixin:
             self._ddac_pressure_ref_time = np.asarray(Time, dtype=float)
             self._ddac_pressure_ref_values = np.asarray(l_P[0], dtype=float)
 
-        has_T = "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]
+        has_T = "RuSmT" in [x.name_spe for x in run_source.Gauges_init]
         if has_T:
             curve_T = self._ensure_curve_at(
                 state.curves_T,
@@ -1505,14 +1569,14 @@ class DdacViewMixin:
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
             self._update_curve_safe(state.curves_dlambda[extra_index], [], [])
 
-        if self.RUN.data_Oscillo is not None:
+        if run_source.data_Oscillo is not None:
             state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(self._get_run_color(state)))
             self._update_curve_safe(state.piezo_curve, time_amp, amp)
         elif state.piezo_curve is not None:
             self._update_curve_safe(state.piezo_curve, [], [])
 
         if state.corr_curve is not None:
-            if self.var_bouton[3].isChecked() and state.correlations:
+            if self.chk_show_corr.isChecked() and state.correlations:
                 self._update_curve_safe(state.corr_curve, state.t_cam, state.correlations)
             else:
                 self._update_curve_safe(state.corr_curve, [], [])
@@ -1566,7 +1630,7 @@ class DdacViewMixin:
         corr_curve = self._get_or_create_curve(state.corr_curve, self.pg_dPdt, pen=pg.mkPen(c))
         state.corr_curve = corr_curve
 
-        if self.var_bouton[3].isChecked() and state.correlations:
+        if self.chk_show_corr.isChecked() and state.correlations:
             state.correlations = list(np.array(state.correlations) / max(abs(np.array(state.correlations))))
             self._update_curve_safe(corr_curve, state.t_cam, state.correlations)
         else:
@@ -1586,6 +1650,25 @@ class DdacViewMixin:
             self.slider.setRange(0, len(state.index_cam)-1)
             self.slider.setValue(self.current_index)
         self._update_movie_frame()
+
+    @pyqtSlot(object)
+    def _on_cedd_loaded(self, payload):
+        """Réception du chargement CEDd effectué en arrière-plan."""
+        if not payload:
+            return
+        request_id = payload.get("request_id")
+        active_request_id = getattr(self, "_active_cedd_load_request_id", None)
+        if request_id is None or request_id != active_request_id:
+            # Résultat obsolète (utilisateur a déjà demandé un autre chargement).
+            return
+        objet_run = payload.get("objet_run")
+        index_file = payload.get("index_file")
+        if objet_run is None or index_file is None:
+            return
+
+        run_id = self._get_run_id(objet_run)
+        self.file_index_map[index_file] = run_id
+        self.PRINT_CEDd(item=None, objet_run=objet_run)
 
     def PRINT_CEDd(self, item=None, objet_run=None):
         """
@@ -1613,15 +1696,19 @@ class DdacViewMixin:
             index_file = self.liste_fichiers.row(item)
 
             if index_file not in self.file_index_map:
-                try:
-                    objet_run = CL.LOAD_CEDd(chemin_fichier)
-                except Exception as e:
-                    print("Erreur LOAD_CEDd:", e)
-                    self.text_box_msg.setText(f"Erreur chargement CEDd : {e}")
-                    return
-                run_id = self._get_run_id(objet_run)
-                self.file_index_map[index_file] = run_id
-                name_select = item.text()
+                request_id = int(getattr(self, "_cedd_load_request_counter", 0)) + 1
+                self._cedd_load_request_counter = request_id
+                self._active_cedd_load_request_id = request_id
+                self._submit_background_task(
+                    lambda: {
+                        "objet_run": CL.LOAD_CEDd(chemin_fichier),
+                        "index_file": index_file,
+                        "request_id": request_id,
+                    },
+                    result_slot=self._on_cedd_loaded,
+                    description="Chargement CEDd…",
+                )
+                return
             else:
                 run_id = self.file_index_map[index_file]
                 state = self.runs.get(run_id)
@@ -1744,7 +1831,7 @@ class DdacViewMixin:
                         fps=fps,
                         t0_movie=t0_movie,
                         time_axis=Time,
-                        with_corr=self.var_bouton[3].isChecked(),
+                        with_corr=self.chk_show_corr.isChecked(),
                     ),
                     "run_id": run_id,
                     "color": c,
@@ -1776,9 +1863,13 @@ class DdacViewMixin:
         if getattr(self, "tstart", None) is not None and getattr(self, "tend", None) is not None and self.tstart != self.tend:
             dp = (self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3
 
+        t_spec = self.selected_spec_time if self.selected_spec_time is not None else 0.0
+        dt_ms = (t - t_spec) * 1e3
+
         txt = (
-            f"t_spec={self.x1*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
-            f"t_frame={t*1e3:.3f}µs n°Frame={self.Num_im}\n\n"
+            f"t_spec={t_spec*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
+            f"t_frame={t*1e3:.3f}ms n°Frame={self.Num_im}\n\n"
+            f"Δt(frame-spec)={dt_ms:.3f}ms\n\n"
             f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
             f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
             )
@@ -1799,8 +1890,10 @@ class DdacViewMixin:
             t = 0.0
 
         # spectre le plus proche en temps
-        times = np.array(state.time)
-        idx_spec = int(np.argmin(np.abs(times - self.x_clic)))-1
+        idx_spec = self._nearest_spectrum_index(state, self.x_clic)
+        if idx_spec is None:
+            self.f_text_CEDd_print(t)
+            return
         spec_nb = state.spectre_number[idx_spec]
 
         if self.spectrum_select_box.isChecked() and int(spec_nb) != self.index_spec:
@@ -1815,6 +1908,50 @@ class DdacViewMixin:
                 self.bit_bypass = False
 
         self.f_text_CEDd_print(t)
+
+    def _nearest_index(self, values, target):
+        """Retourne l'index du point temporel le plus proche de `target`."""
+        arr = np.asarray(values, dtype=float)
+        if arr.size == 0:
+            return None
+        if arr.size == 1:
+            return 0
+
+        diffs = np.diff(arr)
+        if np.all(diffs >= 0):
+            idx = int(np.searchsorted(arr, target, side="left"))
+            if idx <= 0:
+                return 0
+            if idx >= arr.size:
+                return arr.size - 1
+            left = idx - 1
+            return left if abs(target - arr[left]) <= abs(arr[idx] - target) else idx
+
+        return int(np.argmin(np.abs(arr - target)))
+
+    def _nearest_spectrum_index(self, state: RunViewState, target_time: float):
+        """Index du spectre le plus proche basé uniquement sur `state.time`."""
+        if not state.time or not state.spectre_number:
+            return None
+        bound = min(len(state.time), len(state.spectre_number))
+        if bound <= 0:
+            return None
+        idx = self._nearest_index(state.time[:bound], target_time)
+        if idx is None:
+            return None
+        return min(max(0, idx), bound - 1)
+
+    def _nearest_movie_index(self, state: RunViewState, target_time: float):
+        """Index movie le plus proche basé uniquement sur `state.t_cam`."""
+        if not state.t_cam or not state.index_cam:
+            return None
+        bound = min(len(state.t_cam), len(state.index_cam))
+        if bound <= 0:
+            return None
+        idx = self._nearest_index(state.t_cam[:bound], target_time)
+        if idx is None:
+            return None
+        return min(max(0, idx), bound - 1)
 
     def _get_ddac_target_from_pos(self, pos):
         """Détermine le ViewBox et le type de courbe visé par un clic PyQtGraph."""
@@ -1845,9 +1982,10 @@ class DdacViewMixin:
                 self._report_warning("Sélection Pstart/Pend réinitialisée après un clic hors P.")
 
         self.x_clic, self.y_clic = x, y
-        self.line_t_P.setPos(x)
-        self.line_t_sigma.setPos(x)
-        self.line_t_dPdt.setPos(x)
+        self.selected_spec_time = x
+        self.line_t_spec_P.setPos(x)
+        self.line_t_spec_sigma.setPos(x)
+        self.line_t_spec_dPdt.setPos(x)
 
         if which == "P":
             self.x1, self.y1 = x, y
@@ -1893,8 +2031,10 @@ class DdacViewMixin:
         ):
             return
 
-        t_array = np.array(state.t_cam)
-        self.current_index = int(np.argmin(np.abs(t_array - self.x_clic)))
+        idx = self._nearest_movie_index(state, self.x_clic)
+        if idx is None:
+            return
+        self.current_index = idx
         self.Num_im=state.index_cam[self.current_index]
         self.slider.blockSignals(True)
         self.slider.setValue(self.current_index)
@@ -1919,16 +2059,18 @@ class DdacViewMixin:
         x = mouse_point.x()
         y = mouse_point.y()
 
+        if (
+            self._last_ddac_click_target == which
+            and self._last_ddac_click_time is not None
+            and abs(self._last_ddac_click_time - x) <= 1e-12
+        ):
+            return
+        self._last_ddac_click_target = which
+        self._last_ddac_click_time = x
+
         self._update_ddac_markers(which, x, y)
         if which == "P":
             self._select_phase_at_time(x)
-
-        if hasattr(self, "line_t_click_ddac"):
-            self.line_t_click_ddac.setPos(x)
-        if hasattr(self, "ddac_click_time_label"):
-            self.ddac_click_time_label.setText(f"t = {x*1e3:.3f} ms")
-            self.ddac_click_time_label.setPos(x, y)
-            self.ddac_click_time_label.show()
 
         state = self._get_state_for_run()
         self._sync_movie_after_click(state)
@@ -1958,6 +2100,7 @@ class DdacViewMixin:
 
         frame_idx = idx_list[self.current_index]
         t = state.t_cam[self.current_index]
+        self.selected_frame_time = t
 
         frame = self.read_frame(state.cap, frame_idx)
         if frame is None:
