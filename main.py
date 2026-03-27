@@ -207,9 +207,11 @@ class MainWindow(
             "line_t_P": "line_t_frame",
             "line_t_dPdt": "line_t_frame",
             "line_t_sigma": "line_t_frame",
+            "line_t_dlambda": "line_t_frame",
             "line_t_spec_P": "line_t_spec",
             "line_t_spec_dPdt": "line_t_spec",
             "line_t_spec_sigma": "line_t_spec",
+            "line_t_spec_dlambda": "line_t_spec",
             "line_nspec": "line_t_frame",
             "line_p0": "baseline_time",
             "scatter_P": "scatter",
@@ -1216,7 +1218,7 @@ class MainWindow(
                     dlg.setLabelText(f"Fit du spectre {i} / {index_stop}")
                 percent = int(100 * k / n_tot)
                 dlg.setValue(percent)
-                if not self._multi_fit_fast_mode or (k % 5 == 0):
+                if not self._multi_fit_fast_mode or (k % int((index_stop-index_start)/10) == 0):
                     QApplication.processEvents()
 
                 # Pour i > index_start : on copie les Gauges du spectre précédent

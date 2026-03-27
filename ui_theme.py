@@ -247,6 +247,8 @@ class ThemeMixin:
                 "line_t_P",
                 "line_t_dPdt",
                 "line_t_sigma",
+                "line_t_dlambda",
+                "line_t_spec_dlambda",
                 "line_nspec",
                 "line_p0",
                 "scatter_P",

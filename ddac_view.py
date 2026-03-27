@@ -57,6 +57,56 @@ class RunViewState:
 
 
 class DdacViewMixin:
+    def _time_unit_from_series(self, time_values):
+        """Détermine une unité de temps lisible selon l'échelle du run."""
+        arr = np.asarray(time_values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size < 2:
+            span_s = 0.0
+        else:
+            span_s = float(np.nanmax(arr) - np.nanmin(arr))
+        if span_s <= 0:
+            return ("ms", 1e3)
+        candidates = [("s", 1.0), ("ms", 1e3), ("µs", 1e6), ("ns", 1e9)]
+        best = candidates[0]
+        best_score = float("inf")
+        for symbol, scale in candidates:
+            span_in_unit = span_s * scale
+            score = abs(np.log10(max(span_in_unit, 1e-12)) - 1.5)
+            if score < best_score:
+                best_score = score
+                best = (symbol, scale)
+        return best
+
+    def _set_time_display_unit(self, time_values):
+        symbol, scale = self._time_unit_from_series(time_values)
+        self._time_unit_symbol = symbol
+        self._time_unit_scale = float(scale)
+        self._dpdt_unit_symbol = f"GPa/{symbol}"
+        self._dpdt_scale_from_seconds = 1.0 / self._time_unit_scale
+        self._update_time_axis_labels()
+
+    def _update_time_axis_labels(self):
+        time_symbol = getattr(self, "_time_unit_symbol", "s")
+        dpdt_symbol = getattr(self, "_dpdt_unit_symbol", "GPa/s")
+        if hasattr(self, "pg_sigma"):
+            self.pg_sigma.setLabel("bottom", f"Time ({time_symbol})")
+            axis = self.pg_sigma.getAxis("bottom")
+            if axis is not None:
+                axis.setScale(self._time_unit_scale)
+        if hasattr(self, "pg_P"):
+            # Label X uniquement sur le plot du dessous (sigma)
+            self.pg_P.setLabel("bottom", "")
+            axis = self.pg_P.getAxis("bottom")
+            if axis is not None:
+                axis.setScale(self._time_unit_scale)
+        if hasattr(self, "pg_dPdt"):
+            axis = self.pg_dPdt.getAxis("bottom")
+            if axis is not None:
+                axis.setScale(self._time_unit_scale)
+            self.pg_dPdt.setLabel("bottom", "")
+            self.pg_dPdt.setLabel("left", f"dP/dt ({dpdt_symbol}), T (K)")
+
     def _add_ddac_plot(self, *, row: int, col: int, x_label: Optional[str] = None, y_label: Optional[str] = None, show_grid: bool = True, **kwargs):
         plot_item = self.pg_ddac.addPlot(row=row, col=col, **kwargs)
         self._stylize_plot(plot_item, x_label=x_label, y_label=y_label, show_grid=show_grid)
@@ -155,10 +205,12 @@ class DdacViewMixin:
         self.line_t_P = self._create_marker_line(angle=90)
         self.line_t_dPdt = self._create_marker_line(angle=90)
         self.line_t_sigma = self._create_marker_line(angle=90)
+        self.line_t_dlambda = self._create_marker_line(angle=90)
 
         self.line_t_spec_P = self._create_marker_line(angle=90)
         self.line_t_spec_dPdt = self._create_marker_line(angle=90)
         self.line_t_spec_sigma = self._create_marker_line(angle=90)
+        self.line_t_spec_dlambda = self._create_marker_line(angle=90)
 
         self.line_p0 = self._create_marker_line(angle=0, pos=0)
         self.pg_P.addItem(self.line_p0)
@@ -168,6 +220,8 @@ class DdacViewMixin:
         self.pg_dPdt.addItem(self.line_t_spec_dPdt)
         self.pg_sigma.addItem(self.line_t_sigma)
         self.pg_sigma.addItem(self.line_t_spec_sigma)
+        self.pg_dlambda.addItem(self.line_t_dlambda)
+        self.pg_dlambda.addItem(self.line_t_spec_dlambda)
 
         self.line_nspec = self._create_marker_line(angle=90)
         self.pg_dlambda.addItem(self.line_nspec)
@@ -181,6 +235,11 @@ class DdacViewMixin:
         self._ddac_pressure_ref_time = None
         self._ddac_pressure_ref_values = None
         self._ddac_zone_summary_text = ""
+        self._time_unit_symbol = "s"
+        self._time_unit_scale = 1.0
+        self._dpdt_unit_symbol = "GPa/s"
+        self._dpdt_scale_from_seconds = 1.0
+        self._update_time_axis_labels()
 
         self.c_m_base = make_c_m(self.current_theme)
         self.color=[]
@@ -770,10 +829,10 @@ class DdacViewMixin:
         p0 = float(np.interp(t0, t, p))
         p1 = float(np.interp(t1, t, p))
         dt_s = float(t1 - t0)
-        dt_ms = dt_s * 1e3
+        dt_unit = dt_s * self._time_unit_scale
         dp = float(p1 - p0)
-        dpdt_int = float(dp / dt_ms) if dt_ms != 0 else np.nan
-        return {"t0": t0, "t1": t1, "p0": p0, "p1": p1, "dt_ms": dt_ms, "dp": dp, "dpdt_int": dpdt_int}
+        dpdt_int = float(dp / dt_unit) if dt_unit != 0 else np.nan
+        return {"t0": t0, "t1": t1, "p0": p0, "p1": p1, "dt_unit": dt_unit, "dp": dp, "dpdt_int": dpdt_int}
 
     def _build_extrapolated_pressure_curve(self, t0: float, t1: float, p0: float):
         t_ref, p_ref = self._get_reference_pressure_series()
@@ -784,14 +843,14 @@ class DdacViewMixin:
             win = self._effective_dpdt_window(p_ref.size)
             if win < p_ref.size:
                 p_ref = CL.savgol_filter(p_ref, win, 1)
-        t_ref_ms = t_ref * 1e3
-        dpdt_ref = np.gradient(p_ref, t_ref_ms, edge_order=1)
+        t_ref_unit = t_ref * self._time_unit_scale
+        dpdt_ref = np.gradient(p_ref, t_ref_unit, edge_order=1)
         t_dense = np.linspace(t0, t1, 200)
         y_dense = np.interp(t_dense, t_ref, dpdt_ref)
-        t_dense_ms = t_dense * 1e3
-        cumulative = np.zeros_like(t_dense_ms)
-        if t_dense_ms.size > 1:
-            cumulative[1:] = np.cumsum(0.5 * (y_dense[1:] + y_dense[:-1]) * np.diff(t_dense_ms))
+        t_dense_unit = t_dense * self._time_unit_scale
+        cumulative = np.zeros_like(t_dense_unit)
+        if t_dense_unit.size > 1:
+            cumulative[1:] = np.cumsum(0.5 * (y_dense[1:] + y_dense[:-1]) * np.diff(t_dense_unit))
         p_extrap = p0 + cumulative
         return t_dense, p_extrap
 
@@ -814,16 +873,11 @@ class DdacViewMixin:
 
         p1_extrap = float(p_extrap[-1]) if p_extrap.size else stats["p1"]
         dp_extrap = p1_extrap - p0
-        dpdt_extrap = float(dp_extrap / stats["dt_ms"]) if stats["dt_ms"] != 0 else np.nan
+        dpdt_extrap = float(dp_extrap / stats["dt_unit"]) if stats["dt_unit"] != 0 else np.nan
 
         self._ddac_zone_summary_text = (
-            "Zone dP/dt\n"
-            f"P début: {p0:.3f} GPa\n"
-            f"P fin (extrap): {p1_extrap:.3f} GPa\n"
-            f"Δt: {stats['dt_ms']:.2f} ms\n"
-            f"ΔP (extrap): {dp_extrap:.3f} GPa\n"
-            f"∫dP/dt dt: {dp_extrap:.3f} GPa\n"
-            f"dP/dt int: {dpdt_extrap:.4f} GPa/ms"
+            f"P start: {p0:.3f} P end: {p1_extrap:.3f} ΔP: {dp_extrap:.3f} (all GPa)\n"
+            f"Δt: {stats['dt_unit']:.2f} {self._time_unit_symbol}  dP/dt int: {dpdt_extrap:.4f} {self._dpdt_unit_symbol}"
         )
         state = self._get_state_for_run()
         current_t = state.t_cam[self.current_index] if state is not None and state.t_cam else 0.0
@@ -942,7 +996,9 @@ class DdacViewMixin:
             self.pg_P.setXRange(x_min, x_max, padding=0.01)
             self.pg_dPdt.setXRange(x_min, x_max, padding=0.01)
             self.pg_sigma.setXRange(x_min, x_max, padding=0.01)
-            self.pg_dlambda.setXRange(x_min, x_max, padding=0.01)
+            x_dlambda = self._dlambda_x_values(state)
+            if x_dlambda:
+                self.pg_dlambda.setXRange(min(x_dlambda), max(x_dlambda), padding=0.01)
             self.attach_spectrum_time(time_array=state.time)
 
             self._apply_fit_from_spin()
@@ -1401,7 +1457,9 @@ class DdacViewMixin:
         self._apply_viewbox_limits(vb_sigma, x_time, state.curves_sigma)
 
         vb_dlambda = self.pg_dlambda.getViewBox()
-        self._apply_viewbox_limits(vb_dlambda, x_time, state.curves_dlambda)
+        x_dlambda = np.asarray(self._dlambda_x_values(state), dtype=float)
+        if x_dlambda.size >= 2:
+            self._apply_viewbox_limits(vb_dlambda, x_dlambda, state.curves_dlambda)
 
     def update(self,val): # pour la barre de défilmetn des images
         self.current_index=int(val)
@@ -1507,12 +1565,13 @@ class DdacViewMixin:
         state.time = Time
         state.spectre_number = spectre_number
         state.pressure_series = l_P
+        self._set_time_display_unit(Time)
 
         for i, G in enumerate(Gauges_RUN):
             l_p_filtre = CL.savgol_filter(l_P[i], self.dpdt_range_entry.value(), 1) if len(l_P[i]) > 0 else np.array([])
             if len(l_p_filtre) > 4 and len(Time) > 4:
                 dps = [
-                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                    (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * self._dpdt_scale_from_seconds
                     for x in range(2, len(l_p_filtre) - 2)
                 ]
                 time_dps = Time[2:-2]
@@ -1557,6 +1616,7 @@ class DdacViewMixin:
             self._update_curve_safe(state.curves_T[0], [], [])
 
         for i, spe in enumerate(l_spe):
+            x_dlambda = self._dlambda_x_values(state, spe)
             curve = self._ensure_curve_at(
                 state.curves_dlambda,
                 i,
@@ -1565,7 +1625,7 @@ class DdacViewMixin:
                 symbol='+',
                 symbolPen=pg.mkPen(self._get_run_color(state)),
             )
-            self._update_curve_safe(curve, Time, spe)
+            self._update_curve_safe(curve, x_dlambda, spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe)
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
             self._update_curve_safe(state.curves_dlambda[extra_index], [], [])
 
@@ -1766,9 +1826,11 @@ class DdacViewMixin:
         self.pg_P.setXRange(min(Time), max(Time), padding=0.01)
         self.pg_dPdt.setXRange(min(Time), max(Time), padding=0.01)
         self.pg_sigma.setXRange(min(Time), max(Time), padding=0.01)
-        self.pg_dlambda.setXRange(min(Time), max(Time), padding=0.01)
+        if getattr(self.RUN, "list_nspec", None) is not None and len(self.RUN.list_nspec) > 0:
+            self.pg_dlambda.setXRange(min(self.RUN.list_nspec), max(self.RUN.list_nspec), padding=0.01)
 
         state.time = Time
+        self._set_time_display_unit(Time)
         state.spectre_number = self.RUN.list_nspec
         state.list_item = item_run
         state.t_cam=self.RUN.time_movie
@@ -1783,7 +1845,7 @@ class DdacViewMixin:
             else:
                 l_p_filtre =l_P[i]
             dps = [
-                (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * 1e-3
+                (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * self._dpdt_scale_from_seconds
                 for x in range(2, len(l_p_filtre) - 2)
             ]
             state.curves_P.append(
@@ -1810,8 +1872,16 @@ class DdacViewMixin:
 
         for spe in l_spe:
             if spe is not []:
+                x_dlambda = self._dlambda_x_values(state, spe)
                 state.curves_dlambda.append(
-                    self.pg_dlambda.plot(Time, spe, pen=pg.mkPen(c, width=3), symbol='h', symbolPen=pg.mkPen(c, width=3), symbolSize=10)
+                    self.pg_dlambda.plot(
+                        x_dlambda,
+                        spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe,
+                        pen=pg.mkPen(c, width=3),
+                        symbol='h',
+                        symbolPen=pg.mkPen(c, width=3),
+                        symbolSize=10,
+                    )
                 )
 
         # Film
@@ -1859,22 +1929,19 @@ class DdacViewMixin:
 
     def f_text_CEDd_print(self, t):
         """Met à jour le texte d'information dDAC dans le TextItem PyQtGraph."""
-        dp = None
-        if getattr(self, "tstart", None) is not None and getattr(self, "tend", None) is not None and self.tstart != self.tend:
-            dp = (self.Pstart - self.Pend) / (self.tstart - self.tend) * 1e-3
-
         t_spec = self.selected_spec_time if self.selected_spec_time is not None else 0.0
-        dt_ms = (t - t_spec) * 1e3
+
+        t_spec_disp = t_spec * self._time_unit_scale
+        t_frame_disp = t * self._time_unit_scale
+        dt_disp = (t - t_spec) * self._time_unit_scale
 
         txt = (
-            f"t_spec={t_spec*1e3:.3f}ms n°Spec={self.x5:.2f}\n\n"
-            f"t_frame={t*1e3:.3f}ms n°Frame={self.Num_im}\n\n"
-            f"Δt(frame-spec)={dt_ms:.3f}ms\n\n"
-            f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or GPa/ms\n\n"
-            f"dP/dt={0.0 if dp is None else dp:.3f} GPa/ms"
+            f"t_spec={t_spec_disp:.3f}{self._time_unit_symbol} n°Spec={self.x5:.2f}\n"
+            f"t_frame={t_frame_disp:.3f}{self._time_unit_symbol} n°Frame={self.Num_im}\n"
+            f"P={self.y1:.2f}GPa  T or dP/dt={self.y3:.2f} K or {self._dpdt_unit_symbol} t_clic={self.x_clic*self._time_unit_scale:.3f}{self._time_unit_symbol}"
             )
         if self._ddac_zone_summary_text:
-            txt = f"{txt}\n\n{self._ddac_zone_summary_text}"
+            txt = f"{txt}\n- - - - - - - - -\n{self._ddac_zone_summary_text}"
         self.pg_text_label.setText(txt)
 
     def f_CEDd_update_print(self):
@@ -1931,7 +1998,7 @@ class DdacViewMixin:
 
     def _nearest_spectrum_index(self, state: RunViewState, target_time: float):
         """Index du spectre le plus proche basé uniquement sur `state.time`."""
-        if not state.time or not state.spectre_number:
+        if state.time is None or state.spectre_number is None:
             return None
         bound = min(len(state.time), len(state.spectre_number))
         if bound <= 0:
@@ -1952,6 +2019,37 @@ class DdacViewMixin:
         if idx is None:
             return None
         return min(max(0, idx), bound - 1)
+    
+    def _dlambda_x_values(self, state: Optional[RunViewState], y_values=None):
+        """Axe X de Δλ: toujours basé sur les numéros de spectre."""
+        if state is None or not state.spectre_number:
+            if y_values is None:
+                return []
+            return list(range(len(y_values)))
+        x_vals = list(state.spectre_number)
+        if y_values is not None:
+            n = min(len(x_vals), len(y_values))
+            return x_vals[:n]
+        return x_vals
+
+    def _nearest_spectrum_number(self, state: Optional[RunViewState], target_time: float):
+        idx = self._nearest_spectrum_index(state, target_time) if state is not None else None
+        if idx is None or not state.spectre_number:
+            return None
+        return state.spectre_number[idx]
+
+    def _time_from_spectrum_number(self, state: Optional[RunViewState], spectrum_number: float):
+        if state is None or not state.spectre_number or not state.time:
+            return None
+        bound = min(len(state.spectre_number), len(state.time))
+        if bound <= 0:
+            return None
+        spec = np.asarray(state.spectre_number[:bound], dtype=float)
+        idx = self._nearest_index(spec, float(spectrum_number))
+        if idx is None:
+            return None
+        return float(state.time[idx])
+    
 
     def _get_ddac_target_from_pos(self, pos):
         """Détermine le ViewBox et le type de courbe visé par un clic PyQtGraph."""
@@ -1981,11 +2079,23 @@ class DdacViewMixin:
             if hasattr(self, "_report_warning"):
                 self._report_warning("Sélection Pstart/Pend réinitialisée après un clic hors P.")
 
-        self.x_clic, self.y_clic = x, y
-        self.selected_spec_time = x
-        self.line_t_spec_P.setPos(x)
-        self.line_t_spec_sigma.setPos(x)
-        self.line_t_spec_dPdt.setPos(x)
+        state = self._get_state_for_run()
+        x_time = x
+        if which == "dlambda":
+            x_time_from_spec = self._time_from_spectrum_number(state, x)
+            if x_time_from_spec is not None:
+                x_time = x_time_from_spec
+
+        self.x_clic, self.y_clic = x_time, y
+        if self.spectrum_select_box.isChecked():
+            self.selected_spec_time = x_time
+            self.line_t_spec_P.setPos(x_time)
+            self.line_t_spec_sigma.setPos(x_time)
+            self.line_t_spec_dPdt.setPos(x_time)
+            nspec_from_time = self._nearest_spectrum_number(state, x_time)
+            if nspec_from_time is not None:
+                self.line_t_spec_dlambda.setPos(nspec_from_time)
+
 
         if which == "P":
             self.x1, self.y1 = x, y
@@ -2113,8 +2223,9 @@ class DdacViewMixin:
         self.line_t_P.setPos(t)
         self.line_t_dPdt.setPos(t)
         self.line_t_sigma.setPos(t)
-        if state.spectre_number and len(state.spectre_number) > self.current_index:
-            nspec = state.spectre_number[self.current_index]
+        nspec = self._nearest_spectrum_number(state, t)
+        if nspec is not None:
+            self.line_t_dlambda.setPos(nspec)
             self.line_nspec.setPos(nspec)
 
         # Texte (inclut aussi le buffer de zone dP/dt si actif)
