@@ -1098,6 +1098,30 @@ class DdacViewMixin:
     def _on_phase_template_changed(self, text):
         self.selected_phase_template = text.strip() or None
         self._update_add_phase_button_label()
+        self._apply_selected_phase_template_to_zone()
+
+    def _apply_selected_phase_template_to_zone(self):
+        """Applique le template choisi à la zone actuellement sélectionnée."""
+        state = self._get_state_for_run()
+        if state is None:
+            return
+        phase_name = (self.selected_phase_template or "").strip()
+        if not phase_name:
+            return
+        element = self.phase_element_selector.currentText().strip() or "H2O"
+        zones = state.phase_tracks.get(element, [])
+        idx = self.phase_list.currentRow()
+        if idx < 0:
+            idx = self.selected_phase_index if self.selected_phase_index is not None else -1
+        if idx < 0 or idx >= len(zones):
+            return
+        if zones[idx].get("name") == phase_name:
+            return
+        zones[idx]["name"] = phase_name
+        self._refresh_phase_list()
+        self.phase_list.setCurrentRow(idx)
+        self._render_phase_regions()
+        self._sync_phase_state_to_run(state)
 
     def _choose_phase_pattern_file(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -1302,13 +1326,43 @@ class DdacViewMixin:
         element = self.phase_element_selector.currentText().strip() or "H2O"
         zones = state.phase_tracks.setdefault(element, [])
         t0, t1 = float(min(state.time)), float(max(state.time))
+        zones.sort(key=lambda z: z["start"])
+        anchor_time = self.selected_spec_time
+        if anchor_time is None:
+            anchor_time = self.x_clic if getattr(self, "x_clic", None) is not None else t0
+        anchor_time = float(min(max(anchor_time, t0), t1))
+
+        prev_zone = None
+        next_zone = None
+        for zone in zones:
+            z_start = float(zone["start"])
+            z_end = float(zone["end"])
+            if z_end <= anchor_time:
+                prev_zone = zone
+            elif z_start >= anchor_time:
+                next_zone = zone
+                break
+
+        lower_bound = float(prev_zone["end"]) if prev_zone is not None else t0
+        upper_bound = float(next_zone["start"]) if next_zone is not None else t1
+
+        if lower_bound >= upper_bound:
+            # Recours: on évite la zone pleine plage et on propose une petite fenêtre locale.
+            center = anchor_time
+            dt = max((t1 - t0) * 0.01, 1e-6)
+            lower_bound = max(t0, center - dt)
+            upper_bound = min(t1, center + dt)
+            if lower_bound >= upper_bound:
+                lower_bound, upper_bound = t0, t1
+
         phase_name = self._next_available_phase_name(element, zones)
         self.selected_phase_template = phase_name
-        new_zone = {"name": phase_name, "start": t0, "end": t1}
+        new_zone = {"name": phase_name, "start": lower_bound, "end": upper_bound}
         zones.append(new_zone)
         zones.sort(key=lambda z: z["start"])
         self._refresh_phase_list()
-        self.phase_list.setCurrentRow(len(zones) - 1)
+        selected_idx = zones.index(new_zone)
+        self.phase_list.setCurrentRow(selected_idx)
         self._render_phase_regions()
         self._sync_phase_state_to_run(state)
 
@@ -1336,6 +1390,8 @@ class DdacViewMixin:
         zones = state.phase_tracks.get(element, [])
         if idx >= len(zones):
             return
+        self.selected_phase_index = idx
+        self.phase_list.setCurrentRow(idx)
         start, end = region.getRegion()
         zones[idx]["start"] = float(min(start, end))
         zones[idx]["end"] = float(max(start, end))

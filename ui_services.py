@@ -489,6 +489,7 @@ class GaugeWorkflowMixin:
         if self.Gauge_init_box.isChecked() and self.RUN is not None:
             self.RUN.Gauges_init[self.index_jauge].lamb0 = float(self.lamb0_entry.text())
             self.RUN.Gauges_init[self.index_jauge].T = self.spinbox_T.value()
+            self.RUN.Corr_Summary(All=True)
             self.REFRESH()
 
     def f_name_spe(self):
