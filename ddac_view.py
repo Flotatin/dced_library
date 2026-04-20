@@ -1487,6 +1487,35 @@ class DdacViewMixin:
         curve.setData(x_array, y_array)
         return True
 
+    def _downsample_xy_for_display(self, x_data, y_data, max_points: int = 4000):
+        """Réduit la densité de points pour l'affichage quand les séries sont massives."""
+
+        x_array = np.asarray(x_data) if x_data is not None else np.array([])
+        y_array = np.asarray(y_data) if y_data is not None else np.array([])
+        if x_array.size == 0 or y_array.size == 0:
+            return x_array, y_array
+        if x_array.size != y_array.size:
+            n = min(x_array.size, y_array.size)
+            x_array = x_array[:n]
+            y_array = y_array[:n]
+        if x_array.size <= max_points:
+            return x_array, y_array
+
+        step = int(np.ceil(x_array.size / max_points))
+        return x_array[::step], y_array[::step]
+
+    def _configure_heavy_curve_rendering(self, curve: Optional[pg.PlotDataItem]) -> None:
+        """Active les optimisations PyQtGraph utiles aux courbes volumineuses."""
+
+        if curve is None:
+            return
+        if hasattr(curve, "setClipToView"):
+            curve.setClipToView(True)
+        if hasattr(curve, "setDownsampling"):
+            curve.setDownsampling(ds=1, auto=True, method='peak')
+        if hasattr(curve, "setDynamicRangeLimit"):
+            curve.setDynamicRangeLimit(1e6)
+
     def _get_or_create_curve(self, curve, plot_widget, **plot_kwargs):
         """Retourne la courbe existante ou en crée une nouvelle sur le plot fourni."""
 
@@ -1719,7 +1748,9 @@ class DdacViewMixin:
 
         if run_source.data_Oscillo is not None:
             state.piezo_curve = self._get_or_create_curve(state.piezo_curve, self.pg_P, pen=pg.mkPen(self._get_run_color(state)))
-            self._update_curve_safe(state.piezo_curve, time_amp, amp)
+            self._configure_heavy_curve_rendering(state.piezo_curve)
+            time_amp_plot, amp_plot = self._downsample_xy_for_display(time_amp, amp, max_points=5000)
+            self._update_curve_safe(state.piezo_curve, time_amp_plot, amp_plot)
         elif state.piezo_curve is not None:
             self._update_curve_safe(state.piezo_curve, [], [])
 
