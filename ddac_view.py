@@ -1291,6 +1291,11 @@ class DdacViewMixin:
             return
         time = time[:n]
         pressure = pressure[:n]
+        pressure_for_phase = pressure
+        smooth_window = 5
+        if n >= smooth_window:
+            kernel = np.ones(smooth_window, dtype=float) / float(smooth_window)
+            pressure_for_phase = np.convolve(pressure, kernel, mode="same")
 
         def phase_for_p(p):
             for row in patterns:
@@ -1299,12 +1304,39 @@ class DdacViewMixin:
                 if pmin <= p <= pmax:
                     return row["phase"]
             return None
+        
+        raw_phase_labels = [phase_for_p(p) for p in pressure_for_phase]
+        min_points_per_zone = 4
+        if min_points_per_zone > 1:
+            labels = list(raw_phase_labels)
+            changed = True
+            while changed:
+                changed = False
+                i = 0
+                while i < n:
+                    j = i + 1
+                    while j < n and labels[j] == labels[i]:
+                        j += 1
+                    run_length = j - i
+                    if 0 < run_length < min_points_per_zone:
+                        left_label = labels[i - 1] if i > 0 else None
+                        right_label = labels[j] if j < n else None
+                        replacement = left_label if left_label is not None else right_label
+                        if replacement is not None and replacement != labels[i]:
+                            for k in range(i, j):
+                                labels[k] = replacement
+                            changed = True
+                    i = j
+            phase_labels = labels
+        else:
+            phase_labels = raw_phase_labels
+
 
         zones = []
-        current_name = phase_for_p(pressure[0])
+        current_name = phase_labels[0]
         start = time[0]
         for i in range(1, n):
-            name = phase_for_p(pressure[i])
+            name = phase_labels[i]
             if name != current_name:
                 if current_name is not None:
                     zones.append({"name": current_name, "start": float(start), "end": float(time[i])})
