@@ -780,12 +780,7 @@ class MainWindow(
         if state is None:
             return
 
-        if getattr(state, "cap", None) is not None:
-            try:
-                state.cap.release()
-            except Exception:
-                pass
-            state.cap = None
+        self._release_cap_for_state(state)
 
         # Nettoyage des courbes stockées dans l'état
         for curve in state.curves_T:
@@ -1193,6 +1188,7 @@ class MainWindow(
 
         self._multi_fit_running = True
         self._multi_fit_fast_mode = bool(getattr(self, "chk_multi_fit_fast", None) and self.chk_multi_fit_fast.isChecked())
+        failed_indices = []
 
         # ----- BOUCLE SUR LES SPECTRES -----
         try:
@@ -1218,8 +1214,11 @@ class MainWindow(
                     dlg.setLabelText(f"Fit du spectre {i} / {index_stop}")
                 percent = int(100 * k / n_tot)
                 dlg.setValue(percent)
-                if not self._multi_fit_fast_mode or (k % int((index_stop-index_start)/10) == 0):
+                progress_step = max(1, int((index_stop - index_start) / 10))
+                if not self._multi_fit_fast_mode or (k % progress_step == 0):
                     QApplication.processEvents()
+
+                original_curr_spec = copy.deepcopy(self.RUN.Spectra[i])
 
                 # Pour i > index_start : on copie les Gauges du spectre précédent
                 if i > index_start:
@@ -1248,9 +1247,17 @@ class MainWindow(
     
                 except Exception as e:
                     print(f"Error during fit on spectrum {i}:", e)
+                    failed_indices.append(i)
+                    self.Spectrum = copy.deepcopy(original_curr_spec)
                 self.bit_bypass = False
 
-                # On sauvegarde le spectre fitté dans RUN
+                # Si le fit n'a pas convergé, on garde le spectre original
+                # (sans écraser par le dernier fit convergé).
+                if not bool(getattr(self.Spectrum, "bit_fit", False)):
+                    failed_indices.append(i)
+                    self.Spectrum = copy.deepcopy(original_curr_spec)
+
+                # On sauvegarde le spectre (fitté ou original) dans RUN
                 self.RUN.Spectra[i] = copy.deepcopy(self.Spectrum)
 
         finally:
@@ -1279,6 +1286,12 @@ class MainWindow(
         self._multi_fit_running = False
         if canceled:
             self.text_box_msg.setText("Multi-fit chaîné interrompu par l'utilisateur.")
+        elif failed_indices:
+            failed_unique = sorted(set(failed_indices))
+            self.text_box_msg.setText(
+                "Multi-fit terminé avec échecs de convergence sur spectres : "
+                + ", ".join(str(x) for x in failed_unique)
+            )
         else:
             self.text_box_msg.setText("Multi-fit chaîné terminé.")
     def apply_from_spin(self):
