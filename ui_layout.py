@@ -462,8 +462,15 @@ class UiLayoutMixin:
 
         self.chk_use_movie = QCheckBox("use Movie file", self)
         self.chk_use_movie.setChecked(True)
-        self.chk_use_movie.stateChanged.connect(self.Update_Print)
         layout_boutons.addWidget(self.chk_use_movie)
+
+        self.chk_use_oscillo = QCheckBox("use Osillo file", self)
+        self.chk_use_oscillo.setChecked(True)
+        layout_boutons.addWidget(self.chk_use_oscillo)
+
+        self.input_f_spec = QLineEdit()
+        layout_boutons.addLayout(creat_spin_label(self.input_f_spec, "f_spec:"))
+
 
         self.chk_show_P = QCheckBox("print P", self)
         self.chk_show_P.setChecked(True)

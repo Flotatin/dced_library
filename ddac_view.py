@@ -976,11 +976,8 @@ class DdacViewMixin:
             text_fps="No Movie"
 
         if state.cap is None and getattr(state.ced, "folder_Movie", None):
-            try:
-                cap, _fps, _nb = self.Read_Movie(state.ced)
-                state.cap = cap
-            except Exception:
-                state.cap = None
+            cap, _fps, _nb = self.Read_Movie(state.ced)
+            state.cap = cap
 
         if state.index_cam is not None and len(state.index_cam)>0:
             self.current_index = len(state.index_cam) // 2

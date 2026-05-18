@@ -934,6 +934,10 @@ class MainWindow(
         """Crée un CEDd sans lancer de fit automatique."""
         self.Spectrum_save = copy.deepcopy(self.Spectrum)
         New_CEDd = self._build_new_cedd(fit=False)
+        if not self.chk_use_oscillo.isChecked():
+            nspec=len(New_CEDd.Spectra)
+            New_CEDd.Time_spectrum=np.linspace(0,nspec/float(self.input_f_spec.text()),nspec)
+
         self._finalize_new_cedd(New_CEDd, folder_CEDd)
         print("Created CEDd (no fit) as ", New_CEDd.CEDd_path)
         self.text_box_msg.setText("CEDd sans fit auto chargé.\nLancer ensuite le multi-fit.")
@@ -1232,6 +1236,7 @@ class MainWindow(
                     # On remet le modèle à None pour forcer LOAD_Spectrum à reconstruire
                     curr_spec.model   = None
                     curr_spec.bit_fit = False
+                    curr_spec.dY=None
 
                 # Chargement du spectre i dans l'UI + reconstruction de Param0
                 self.bit_bypass = True      # pour éviter trop de boîtes de dialogue
@@ -1243,6 +1248,9 @@ class MainWindow(
                 
                 # Fit automatique avec les paramètres initiaux venant de prev_spec
                 try:
+                    for param_g in self.Param0:
+                        for param in param_g:
+                            param[1]=curr_spec.y_corr[np.argmin(abs(curr_spec.wnb-param[0]))]
                     self.bit_bypass = True
                     self.FIT_lmfitVScurvfit(run_asynchron=False)
     

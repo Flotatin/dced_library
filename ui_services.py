@@ -25,18 +25,23 @@ class CedCreationServiceMixin:
 
     def _resolve_movie_folder_for_creation(self):
         return self.loaded_filename_movie if self.chk_use_movie.isChecked() else None
+    
+    def _resolve_oscilo_file_for_creation(self):
+        return (self.loaded_filename_oscilo,[2, 4]) if self.chk_use_oscillo.isChecked() else (None,None)
 
     def _build_new_cedd(self, *, fit: bool):
         from Bibli_python import CL_FD_Update as CL
 
         folder_movie = self._resolve_movie_folder_for_creation()
+        data_Oscillo,index= self._resolve_oscilo_file_for_creation()
+
         return CL.CEDd(
             self.loaded_filename_spectro,
             Gauges_init=copy.deepcopy(self.Spectrum.Gauges),
-            data_Oscillo=self.loaded_filename_oscilo,
+            data_Oscillo=data_Oscillo,
             folder_Movie=folder_movie,
             fit=fit,
-            time_index=[2, 4],
+            time_index=index,
             type_filtre=self.Spectrum.type_filtre,
             param_f=self.Spectrum.param_f,
         )

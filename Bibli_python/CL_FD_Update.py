@@ -781,7 +781,7 @@ class Gauge:
                 self.study =pd.concat([pd.DataFrame(np.array([[self.a,self.b,self.c,self.rca,self.V,self.P]]) , columns=['a_'+self.name,'b_'+self.name,'c_'+self.name,'c/a_'+self.name,'V_'+self.name,'P_'+self.name]),self.study_add],axis=1)
                 return print("CODER DRX")
             
-            self.lamb_fit=round(self.pics[0].ctr[0],3)
+            self.lamb_fit=round(self.pics[0].ctr[0],5)
 
             sigmal=lambda_error
             if self.state == "Y":
@@ -820,7 +820,7 @@ class Gauge:
                     self.study_add=pd.DataFrame(np.array([[self.deltaP0i[1][0],T,sigmaT]]),columns=['Deltap12','T','sigma_T'])
 
                 if self.T !=300:
-                    self.P , self.sigmaP =round(float(inversefunc(lambda x_: T_Ruby_by_P(self.lamb_fit,lamb0R=self.lamb0,P=x_),self.T)), 3) ,0
+                    self.P , self.sigmaP =round(float(inversefunc(lambda x_: T_Ruby_by_P(self.lamb_fit,lamb0R=self.lamb0,P=x_),self.T)), 5) ,0
 
             self.study =pd.concat([pd.DataFrame(np.array([[self.P,self.sigmaP,self.lamb_fit,self.fwhm,self.state]]) , columns=['P_'+self.name,'sigma_P_'+self.name,'lambda_'+self.name,'fwhm_'+self.name,"State_"+self.name]),self.study_add],axis=1)
     
@@ -1252,6 +1252,7 @@ class CEDd:
             self.list_Movie=None
             self.time_movie=[]
             self.fps=fps
+            self.t0_movie=0
             self.CEDd_path="not_save"
             self.Gauges_select=[None for _ in range(len(self.Gauges_init))]
             self.initData(fit,time_index,type_filtre,param_f,window)
@@ -1621,25 +1622,48 @@ class CEDd:
         else:
             print("CALCULE FAILED NO DATA")
 
-    def Print(self,num_spec=0,data=[],Oscilo=False):
-        if data ==[] and Oscilo==False:
+    def Print(self, num_spec=0, data=[], Oscilo=False):
+        if data == [] and Oscilo == False:
             self.Spectra[num_spec].Print()
         else:
-            fig,(ax1,ax2) =plt.subplots(1,2)
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+            # --- Tracer les données ---
             for i in range(len(data)):
-                index=np.where(np.array(self.Summary[data[i]]) != None)[0]
-                ax1.plot(self.Summary["n°Spec"][index],self.Summary[data[i]][index],'+-',label=data[i])
-            if self.data_Oscillo is not None and Oscilo is True:
-                c_nam=self.data_Oscillo.columns.tolist()
-                for name in c_nam:
-                    ax2.plot(self.data_Oscillo[c_nam[0]],self.data_Oscillo[name],label=name)
-                y=np.zeros_like(self.Time_spectrum)+1
-                ax2.plot(self.Time_spectrum,y,' k',marker=2,label="spec_time")
-                ax2.axvline(self.t0_movie,label="t0_movie")
+                # Filtrer les valeurs non-None dans data[i]
+                mask = ~pd.isna(self.Summary[data[i]])
+                x_values = self.Summary["n°Spec"][mask]  # Axe X par défaut : n°Spec
+                y_values = self.Summary[data[i]][mask]  # Axe Y : valeurs non-None
+
+                # Si self.Time_spectrum existe et a la même longueur, l'utiliser comme axe X
+                if hasattr(self, 'Time_spectrum') and self.Time_spectrum is not None and len(self.Time_spectrum) == len(self.Summary):
+                    x_values = np.array(self.Time_spectrum)[mask]
+
+                # Tracer la courbe
+                ax1.plot(x_values, y_values, '+-', label=data[i])
+
+            # Configurer l'axe Y pour voir le pulse (ex: 0 à 5)
+            ax1.set_ylim(0, 5)  # Ajuste cette plage selon tes données réelles
+            ax1.set_xlabel("Temps (s) ou n°Spec")
+            ax1.set_ylabel("Valeur")
             ax1.legend(loc="best")
-            ax1.set_title("Summary print")
-            ax2.legend(loc="best")
-            ax2.set_title("Oscilo print")
+            ax1.grid(True)
+
+            # --- Partie Oscillo (si activée) ---
+            if self.data_Oscillo is not None and Oscilo:
+                c_nam = self.data_Oscillo.columns.tolist()
+                for name in c_nam:
+                    if name != "Time":
+                        ax2.plot(self.data_Oscillo[c_nam[0]], self.data_Oscillo[name], label=name)
+                if hasattr(self, 'Time_spectrum') and self.Time_spectrum is not None:
+                    y = np.zeros_like(self.Time_spectrum) + 1
+                    ax2.plot(self.Time_spectrum, y, 'k', marker=2, label="spec_time")
+                if hasattr(self, 't0_movie'):
+                    ax2.axvline(self.t0_movie, label="t0_movie")
+                ax2.legend(loc="best")
+                ax2.set_title("Oscillo print")
+
+            plt.tight_layout()
             plt.show()
 
     def Play_Movie(self):
