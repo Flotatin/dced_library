@@ -907,7 +907,13 @@ class FitWorkflowMixin:
                 self.Spectrum.model = g.model
             else:
                 self.Spectrum.model += g.model
-        self.Spectrum.Data_treatement()
+        if not self._ensure_spectrum_treatment_current():
+            deg_baseline, filtre_type, param = self._current_baseline_params()
+            self.Spectrum.Data_treatement(
+                deg_baseline=deg_baseline,
+                type_filtre=filtre_type,
+                param_f=param,
+            )
 
         if self.zone_spectrum_box.isChecked():
             self.Spectrum.indexX = np.where(

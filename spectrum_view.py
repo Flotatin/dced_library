@@ -20,6 +20,43 @@ class SciAxis(pg.AxisItem):
 
 
 class SpectrumViewMixin:
+    def _current_baseline_params(self):
+        param = [float(self.param_filtre_1_entry.text()), float(self.param_filtre_2_entry.text())]
+        filtre_type = self.filtre_type_selector.currentText()
+        if filtre_type == "svg":
+            param[0], param[1] = int(param[0]), int(param[1])
+        return int(self.deg_baseline_entry.value()), filtre_type, param
+
+    def _spectrum_treatment_matches(self, spectrum, deg_baseline, filtre_type, param_f) -> bool:
+        """Vérifie si baseline/filtre sont déjà calculés avec les paramètres UI."""
+
+        if spectrum is None:
+            return False
+        spec = np.asarray(getattr(spectrum, "spec", []))
+        if spec.size == 0:
+            return False
+
+        for attr in ("blfit", "y_filtre", "y_corr", "x_corr"):
+            values = getattr(spectrum, attr, None)
+            if values is None or len(values) != spec.size:
+                return False
+
+        if int(getattr(spectrum, "deg_baseline", -1)) != int(deg_baseline):
+            return False
+        if getattr(spectrum, "type_filtre", None) != filtre_type:
+            return False
+
+        current_param = list(getattr(spectrum, "param_f", []) or [])
+        if len(current_param) < len(param_f):
+            return False
+        return all(float(current_param[i]) == float(param_f[i]) for i in range(len(param_f)))
+
+    def _ensure_spectrum_treatment_current(self) -> bool:
+        """Retourne True si le spectre courant n'a pas besoin de recalcul baseline."""
+
+        deg_baseline, filtre_type, param = self._current_baseline_params()
+        return self._spectrum_treatment_matches(self.Spectrum, deg_baseline, filtre_type, param)
+
     def _add_spec_plot(self, *, row: int, col: int, x_label: Optional[str] = None, y_label: Optional[str] = None, show_grid: bool = True, **kwargs):
         plot_item = self.pg_spec.addPlot(row=row, col=col, **kwargs)
         self._stylize_plot(plot_item, x_label=x_label, y_label=y_label, show_grid=show_grid)
@@ -720,14 +757,16 @@ class SpectrumViewMixin:
         self.gauge_peak_items = new_items
 
     def Baseline_spectrum(self):
-        param = [float(self.param_filtre_1_entry.text()), float(self.param_filtre_2_entry.text())]
-        if self.filtre_type_selector.currentText() == "svg":
-            param[0], param[1] = int(param[0]), int(param[1])
+        deg_baseline, filtre_type, param = self._current_baseline_params()
+
+        if self._spectrum_treatment_matches(self.Spectrum, deg_baseline, filtre_type, param):
+            self._on_baseline_ready()
+            return
 
         def _process_baseline():
             self.Spectrum.Data_treatement(
-                deg_baseline=int(self.deg_baseline_entry.value()),
-                type_filtre=self.filtre_type_selector.currentText(),
+                deg_baseline=deg_baseline,
+                type_filtre=filtre_type,
                 param_f=param,
                 print_data=False,  # plus besoin de passer ax=ax_baseline, ax2=ax_fft
             )
