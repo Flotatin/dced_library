@@ -68,6 +68,12 @@ class CedCreationServiceMixin:
             if 0 <= idx < len(self.RUN.Spectra):
                 self.RUN.Corr_Summary(num_spec=idx, All=False)
 
+        if (
+            hasattr(self, "_summary_needs_full_rebuild")
+            and self._summary_needs_full_rebuild(self.RUN)
+        ):
+            self.RUN.Corr_Summary(All=True)
+
     def _mark_summary_dirty(self, spec_indices):
         """Marque des index de spectres comme modifiés (dirty)."""
         if isinstance(spec_indices, int):
@@ -906,7 +912,13 @@ class FitWorkflowMixin:
                 self.Spectrum.model = g.model
             else:
                 self.Spectrum.model += g.model
-        self.Spectrum.Data_treatement()
+        if not self._ensure_spectrum_treatment_current():
+            deg_baseline, filtre_type, param = self._current_baseline_params()
+            self.Spectrum.Data_treatement(
+                deg_baseline=deg_baseline,
+                type_filtre=filtre_type,
+                param_f=param,
+            )
 
         if self.zone_spectrum_box.isChecked():
             self.Spectrum.indexX = np.where(
@@ -992,10 +1004,23 @@ class FitWorkflowMixin:
             x_fit=x_sub, y_fit=y_sub, fit=fit, color="m", text_base="Curve_fit", use_abs=False
         )
         if not accepted:
+            # Fit non convergent/qualité faible :
+            # on conserve malgré tout une estimation approchée pour alimenter
+            # les calculs de pression en aval.
+            self.Spectrum.Y = fit + blfit
+            self.Spectrum.X = x_sub
+            self.Spectrum.dY = y_sub - fit
+            self.Spectrum.lamb_fit = params[0]
+            self._assign_fit_params_to_param0(params, nc0_slice_stop=4)
+            self._refresh_fit_plot_cache_from_param0()
+            for gauge in self.Spectrum.Gauges:
+                gauge.bit_fit = True
+            for i, gauge in enumerate(self.Spectrum.Gauges):
+                gauge.lamb_fit = self.Param0[i][0][0]
             self.Spectrum.bit_fit = True
             self.bit_fit_T = True
             self.Spectrum.Calcul_study(mini=False)
-            self.text_box_msg.setText("BAD FIT r^2 INCREAS")
+            self.text_box_msg.setText("BAD FIT r^2 INCREAS (approximation conservée)")
             self.Print_fit_start()
             return
 

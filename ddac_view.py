@@ -8,6 +8,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
 from PyQt5.QtCore import QTimer, Qt, pyqtSlot
 from PyQt5.QtGui import QColor, QFont
@@ -130,9 +131,13 @@ class DdacViewMixin:
         self.previous_button.clicked.connect(self.previous_image)
         movie_layout.addWidget(self.previous_button)
 
-        self.play_stop_button = QPushButton("play/stop")
+        self.play_stop_button = QPushButton("▶")
         self.play_stop_button.clicked.connect(self.f_play_stop_movie)
         movie_layout.addWidget(self.play_stop_button)
+
+        self.direction_button = QPushButton("Sens: →")
+        self.direction_button.clicked.connect(self.toggle_movie_direction)
+        movie_layout.addWidget(self.direction_button)
 
         self.next_button = QPushButton("⟶")
         self.next_button.clicked.connect(self.next_image)
@@ -146,6 +151,7 @@ class DdacViewMixin:
         self.fps_play_spinbox = QSpinBox()
         self.fps_play_spinbox.setRange(1, 1000)
         self.fps_play_spinbox.setValue(100)
+        self.fps_play_spinbox.valueChanged.connect(self._on_movie_fps_changed)
         movie_layout.addWidget(QLabel("fps:"))
         movie_layout.addWidget(self.fps_play_spinbox)
 
@@ -264,6 +270,7 @@ class DdacViewMixin:
         self.current_index = 0
         self.index_playing = 0
         self.playing_movie = False
+        self.movie_play_direction = 1
         self.t_cam = []       # liste par CEDd
         self.index_cam = []
         self.cap = []         # VideoCapture si tu gardes OpenCV
@@ -555,9 +562,15 @@ class DdacViewMixin:
 
         for r in self.fit_regions:
             r.setBounds((tmin, tmax))
+        for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+            zone = getattr(self, attr, None)
+            if zone is not None:
+                zone.setBounds((tmin, tmax))
 
         # initialiser une région cohérente avec les spinbox
         self._apply_fit_from_spin()
+        if self._ddac_multi_zone_range is None:
+            self._set_default_ddac_dpdt_zone_range()
 
 
     def _get_run_color(self, state: RunViewState) -> str:
@@ -589,7 +602,6 @@ class DdacViewMixin:
         if self._block_fit:
             return
         self._apply_fit_from_spin()
-        self._update_ddac_multi_zone_range()
 
     def _effective_dpdt_window(self, size: int) -> int:
         window = int(self.dpdt_range_entry.value()) if hasattr(self, "dpdt_range_entry") else 3
@@ -629,7 +641,6 @@ class DdacViewMixin:
         for r in self.fit_regions:
             r.setRegion((t0, t1))
         self._block_fit = False
-        self._update_ddac_multi_zone_range()
 
 
         # -------------------------
@@ -668,7 +679,6 @@ class DdacViewMixin:
             self.index_stop_entry.blockSignals(False)
 
         self._block_fit = False
-        self._update_ddac_multi_zone_range()
 
     def _compute_ddac_multi_zone_range(self):
         if not hasattr(self, "index_start_entry") or not hasattr(self, "index_stop_entry"):
@@ -704,18 +714,28 @@ class DdacViewMixin:
             start_time, stop_time = stop_time, start_time
         return (start_time, stop_time)
 
-    def _update_ddac_multi_zone_range(self) -> None:
-        if self._ddac_multi_zone_syncing:
-            return
+    def _set_default_ddac_dpdt_zone_range(self) -> None:
+        """Initialise la zone dP/dt sans la lier aux bornes du multi-fit."""
 
         zone_range = self._compute_ddac_multi_zone_range()
-        self._ddac_multi_zone_range = zone_range
         if zone_range is None:
             return
+        self._ddac_multi_zone_range = zone_range
+        self._sync_ddac_dpdt_zone_items(zone_range)
+
+    def _sync_ddac_dpdt_zone_items(self, zone_range) -> None:
         for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
             zone = getattr(self, attr, None)
             if zone is not None:
                 zone.setRegion(zone_range)
+
+    def _update_ddac_multi_zone_range(self) -> None:
+        if self._ddac_multi_zone_syncing:
+            return
+        if self._ddac_multi_zone_range is None:
+            self._set_default_ddac_dpdt_zone_range()
+            return
+        self._sync_ddac_dpdt_zone_items(self._ddac_multi_zone_range)
         self._update_ddac_zone_annotations()
 
     def _apply_ddac_multi_zone_visibility(self) -> None:
@@ -766,35 +786,9 @@ class DdacViewMixin:
                     continue
                 zone.setRegion((start, stop))
 
-            start_index, stop_index = self._indices_from_ddac_range(start, stop)
-            self._set_batch_indices_from_zone(start_index, stop_index)
             self._update_ddac_zone_annotations()
         finally:
             self._ddac_multi_zone_syncing = False
-
-    def _indices_from_ddac_range(self, start: float, stop: float):
-        time_values = self._spec_time
-        if time_values is None or len(time_values) == 0:
-            start_index = int(round(start))
-            stop_index = int(round(stop))
-            return (min(start_index, stop_index), max(start_index, stop_index))
-
-        time_array = np.asarray(time_values, dtype=float)
-        start_index = int(np.nanargmin(np.abs(time_array - start)))
-        stop_index = int(np.nanargmin(np.abs(time_array - stop)))
-        return (min(start_index, stop_index), max(start_index, stop_index))
-
-    def _set_batch_indices_from_zone(self, start_index: int, stop_index: int) -> None:
-        if start_index > stop_index:
-            start_index, stop_index = stop_index, start_index
-        if hasattr(self, "index_start_entry"):
-            self.index_start_entry.blockSignals(True)
-            self.index_start_entry.setValue(start_index)
-            self.index_start_entry.blockSignals(False)
-        if hasattr(self, "index_stop_entry"):
-            self.index_stop_entry.blockSignals(True)
-            self.index_stop_entry.setValue(stop_index)
-            self.index_stop_entry.blockSignals(False)
 
     def _get_reference_pressure_series(self):
         t = np.asarray(getattr(self, "_ddac_pressure_ref_time", []), dtype=float)
@@ -951,12 +945,32 @@ class DdacViewMixin:
             # Copie profonde indispensable ici : on doit pouvoir revenir à l'état
             # précédent d'un RUN lorsque l'utilisateur change d'onglet.
             state.ced = copy.deepcopy(self.RUN)
-            if getattr(state, "cap", None) is not None:
-                try:
-                    state.cap.release()
-                except Exception:
-                    pass
-                state.cap = None
+            # Ne pas relâcher `state.cap` ici :
+            # un changement rapide de RUN peut survenir pendant le calcul
+            # asynchrone des métriques movie (_compute_movie_metrics), qui
+            # continue à lire ce cap. Le release provoque alors des erreurs
+            # lors du retour de tâche / affichage frame.
+
+    def _release_cap_for_state(self, state: Optional[RunViewState]) -> None:
+        """Libère un VideoCapture stocké dans un état de run."""
+
+        if state is None or getattr(state, "cap", None) is None:
+            return
+        try:
+            state.cap.release()
+        except Exception:
+            pass
+        state.cap = None
+
+    def _release_inactive_movie_caps(self) -> None:
+        """Libère les captures vidéo des runs inactifs pour limiter la mémoire/handles."""
+
+        pending = getattr(self, "_movie_metrics_pending_run_ids", set())
+        current_run_id = getattr(self, "current_run_id", None)
+        for run_id, state in list(getattr(self, "runs", {}).items()):
+            if run_id == current_run_id or run_id in pending:
+                continue
+            self._release_cap_for_state(state)
 
     def _finalize_run_selection(self, state: RunViewState, name_select: str):
         self.CLEAR_ALL()
@@ -986,6 +1000,7 @@ class DdacViewMixin:
             self.attach_camera_time(time_array=state.t_cam)
         print("READY bool",bool(state.index_cam))
         self._set_movie_controls_enabled(bool(state.index_cam))
+        self._release_inactive_movie_caps()
 
 
         if state.time is not None and len(state.time)>0:
@@ -1513,6 +1528,44 @@ class DdacViewMixin:
         if hasattr(curve, "setDynamicRangeLimit"):
             curve.setDynamicRangeLimit(1e6)
 
+    def _update_curve_for_display(
+        self,
+        curve: Optional[pg.PlotDataItem],
+        x_data,
+        y_data,
+        *,
+        max_points: int = 4000,
+        symbol: Optional[str] = None,
+        symbol_size: int = 4,
+    ) -> bool:
+        """Met à jour une courbe dDAC avec un sous-échantillonnage d'affichage.
+
+        Les données complètes restent dans le RUN/Summary ; seules les courbes
+        PyQtGraph reçoivent une version allégée pour éviter que l'affichage ne
+        ralentisse après le chargement de nombreux runs.
+        """
+
+        if curve is None:
+            return False
+
+        x_plot, y_plot = self._downsample_xy_for_display(x_data, y_data, max_points=max_points)
+        display_symbol = symbol if len(x_plot) <= 800 else None
+
+        x_old, y_old = curve.getData()
+        if (
+            x_old is not None
+            and y_old is not None
+            and len(x_old) == len(x_plot)
+            and len(y_old) == len(y_plot)
+            and np.array_equal(x_old, x_plot)
+            and np.array_equal(y_old, y_plot)
+        ):
+            return False
+
+        curve.setData(x_plot, y_plot, symbol=display_symbol, symbolSize=symbol_size)
+        self._configure_heavy_curve_rendering(curve)
+        return True
+
     def _get_or_create_curve(self, curve, plot_widget, **plot_kwargs):
         """Retourne la courbe existante ou en crée une nouvelle sur le plot fourni."""
 
@@ -1596,13 +1649,12 @@ class DdacViewMixin:
 
     def REFRESH(self):
         self.RUN.Spectra[self.index_spec]=self.Spectrum
-        if hasattr(self, "_mark_summary_dirty") and hasattr(self, "_flush_summary_dirty"):
-            self._mark_summary_dirty(self.index_spec)
-            self._flush_summary_dirty()
-        elif hasattr(self, "_corr_summary_for_specs"):
-            self._corr_summary_for_specs(self.index_spec)
-        else:
-            self.RUN.Corr_Summary(num_spec=self.index_spec, All=False)
+        # Comportement attendu : recalcul ciblé de la ligne modifiée.
+        # On ne fait un Corr_Summary(All=True) qu'en mode "réparation"
+        # si le Summary semble corrompu (lignes NaN alors que des spectres sont fittés).
+        self.RUN.Corr_Summary(num_spec=self.index_spec, All=False)
+        if self._summary_needs_full_rebuild(self.RUN):
+            self.RUN.Corr_Summary(All=True)
         state = self._get_state_for_run()
         if state is None:
             self.text_box_msg.setText("Aucun état RunViewState pour rafraîchir ce CEDd")
@@ -1624,6 +1676,48 @@ class DdacViewMixin:
             result_slot=self._on_refresh_data_ready,
             description="Rafraîchissement courbes dDAC…",
         )
+
+    def _summary_needs_full_rebuild(self, run_obj) -> bool:
+        """Détecte un Summary incohérent (ex: lignes NaN malgré bit_fit=True)."""
+        if run_obj is None:
+            return False
+        summary = getattr(run_obj, "Summary", None)
+        spectra = getattr(run_obj, "Spectra", None)
+        if summary is None or getattr(summary, "empty", True):
+            return False
+        if not spectra:
+            return False
+
+        spec_column = "n°Spec" if "n°Spec" in summary.columns else None
+        spec_numbers = None
+        if spec_column is not None:
+            spec_numbers = pd.to_numeric(summary[spec_column], errors="coerce")
+
+        for i, spec in enumerate(spectra):
+            if not bool(getattr(spec, "bit_fit", False)):
+                continue
+
+            if spec_numbers is not None:
+                matching_rows = summary.index[spec_numbers == i].tolist()
+                if not matching_rows:
+                    return True
+                row_idx = matching_rows[0]
+            elif i < len(summary):
+                row_idx = summary.index[i]
+            else:
+                return True
+
+            gauges = getattr(spec, "Gauges", []) or []
+            for gauge in gauges:
+                if not bool(getattr(gauge, "bit_fit", True)):
+                    continue
+                col_name = f"P_{getattr(gauge, 'name', '')}"
+                if col_name not in summary.columns:
+                    return True
+                val = pd.to_numeric(pd.Series([summary.at[row_idx, col_name]]), errors="coerce").iloc[0]
+                if pd.isna(val):
+                    return True
+        return False
 
     @pyqtSlot(object)
     def _on_refresh_data_ready(self, payload):
@@ -1702,13 +1796,13 @@ class DdacViewMixin:
             )
 
             curve_P = self._ensure_curve_at(state.curves_P, i, self.pg_P, **curve_kwargs)
-            self._update_curve_safe(curve_P, Time, l_P[i])
+            self._update_curve_for_display(curve_P, Time, l_P[i], symbol='d')
 
             curve_dPdt = self._ensure_curve_at(state.curves_dPdt, i, self.pg_dPdt, **curve_kwargs)
-            self._update_curve_safe(curve_dPdt, time_dps, dps)
+            self._update_curve_for_display(curve_dPdt, time_dps, dps, symbol='d')
 
             curve_sigma = self._ensure_curve_at(state.curves_sigma, i, self.pg_sigma, **curve_kwargs)
-            self._update_curve_safe(curve_sigma, Time, l_fwhm[i])
+            self._update_curve_for_display(curve_sigma, Time, l_fwhm[i], symbol='d')
         
         if len(l_P) > 0 and len(Time) == len(l_P[0]):
             self._ddac_pressure_ref_time = np.asarray(Time, dtype=float)
@@ -1725,7 +1819,7 @@ class DdacViewMixin:
                 symbolBrush='darkred',
                 symbolSize=10,
             )
-            self._update_curve_safe(curve_T, Time, l_T[-1] if l_T else [])
+            self._update_curve_for_display(curve_T, Time, l_T[-1] if l_T else [], symbol='t')
         elif state.curves_T:
             self._update_curve_safe(state.curves_T[0], [], [])
 
@@ -1739,7 +1833,12 @@ class DdacViewMixin:
                 symbol='+',
                 symbolPen=pg.mkPen(self._get_run_color(state)),
             )
-            self._update_curve_safe(curve, x_dlambda, spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe)
+            self._update_curve_for_display(
+                curve,
+                x_dlambda,
+                spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe,
+                symbol='+',
+            )
         for extra_index in range(len(l_spe), len(state.curves_dlambda)):
             self._update_curve_safe(state.curves_dlambda[extra_index], [], [])
 
@@ -1794,6 +1893,10 @@ class DdacViewMixin:
             return
 
         run_id = payload.get("run_id")
+        pending = getattr(self, "_movie_metrics_pending_run_ids", set())
+        pending.discard(run_id)
+        self._movie_metrics_pending_run_ids = pending
+
         state = self.runs.get(run_id)
         if state is None:
             return
@@ -1813,7 +1916,7 @@ class DdacViewMixin:
             self._update_curve_safe(corr_curve, [], [])
 
         self.current_index = len(state.t_cam) // 2 if state.t_cam else 0
-        if state.index_cam:
+        if state.index_cam and state.cap is not None:
             self.Num_im = state.index_cam[self.current_index]
             t = state.t_cam[self.current_index]
             Frame = self.read_frame(state.cap, self.Num_im)
@@ -1826,6 +1929,7 @@ class DdacViewMixin:
             self.slider.setRange(0, len(state.index_cam)-1)
             self.slider.setValue(self.current_index)
         self._update_movie_frame()
+        self._release_inactive_movie_caps()
 
     @pyqtSlot(object)
     def _on_cedd_loaded(self, payload):
@@ -1964,41 +2068,47 @@ class DdacViewMixin:
                 (l_p_filtre[x + 1] - l_p_filtre[x - 1]) / (Time[x + 1] - Time[x - 1]) * self._dpdt_scale_from_seconds
                 for x in range(2, len(l_p_filtre) - 2)
             ]
-            state.curves_P.append(
-                self.pg_P.plot(Time, l_P[i], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
-            )   
-            state.curves_dPdt.append(
-                self.pg_dPdt.plot(Time[2:-2], dps, pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
-            )
-            state.curves_sigma.append(
-                self.pg_sigma.plot(Time, l_fwhm[i], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c, symbolSize=10)
-            )
+            curve_P = self.pg_P.plot(pen=pg.mkPen(c, width=2), symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c)
+            self._update_curve_for_display(curve_P, Time, l_P[i], symbol='d')
+            state.curves_P.append(curve_P)
+
+            curve_dPdt = self.pg_dPdt.plot(pen=pg.mkPen(c, width=2), symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c)
+            self._update_curve_for_display(curve_dPdt, Time[2:-2], dps, symbol='d')
+            state.curves_dPdt.append(curve_dPdt)
+
+            curve_sigma = self.pg_sigma.plot(pen=pg.mkPen(c, width=2), symbolPen=pg.mkPen(G.color_print[0], width=2), symbolBrush=c)
+            self._update_curve_for_display(curve_sigma, Time, l_fwhm[i], symbol='d')
+            state.curves_sigma.append(curve_sigma)
         if "RuSmT" in [x.name_spe for x in self.RUN.Gauges_init]:
-            state.curves_T.append(
-                self.pg_dPdt.plot(Time, l_T[-1], pen=pg.mkPen(c, width=2), symbol='d', symbolPen=pg.mkPen("darkred", width=2),symbolBrush=c, symbolSize=10)
-            )
+            curve_T = self.pg_dPdt.plot(pen=pg.mkPen(c, width=2), symbolPen=pg.mkPen("darkred", width=2), symbolBrush=c)
+            self._update_curve_for_display(curve_T, Time, l_T[-1], symbol='d')
+            state.curves_T.append(curve_T)
         else:
             state.curves_T.append(self.pg_dPdt.plot([], []))
 
         # Piezo
         if self.RUN.data_Oscillo is not None:
-            state.piezo_curve = self.pg_P.plot(time_amp, amp, pen=pg.mkPen(c, width=3))
+            state.piezo_curve = self.pg_P.plot(pen=pg.mkPen(c, width=3))
+            time_amp_plot, amp_plot = self._downsample_xy_for_display(time_amp, amp, max_points=5000)
+            self._update_curve_safe(state.piezo_curve, time_amp_plot, amp_plot)
+            self._configure_heavy_curve_rendering(state.piezo_curve)
         else:
             state.piezo_curve = self.pg_P.plot([], [])
 
         for spe in l_spe:
             if spe is not []:
                 x_dlambda = self._dlambda_x_values(state, spe)
-                state.curves_dlambda.append(
-                    self.pg_dlambda.plot(
-                        x_dlambda,
-                        spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe,
-                        pen=pg.mkPen(c, width=3),
-                        symbol='h',
-                        symbolPen=pg.mkPen(c, width=3),
-                        symbolSize=10,
-                    )
+                curve_dlambda = self.pg_dlambda.plot(
+                    pen=pg.mkPen(c, width=3),
+                    symbolPen=pg.mkPen(c, width=3),
                 )
+                self._update_curve_for_display(
+                    curve_dlambda,
+                    x_dlambda,
+                    spe[:len(x_dlambda)] if hasattr(spe, "__len__") else spe,
+                    symbol='h',
+                )
+                state.curves_dlambda.append(curve_dlambda)
 
         # Film
         if self.RUN.folder_Movie is not None:
@@ -2008,6 +2118,10 @@ class DdacViewMixin:
             state.t_cam = []
             state.index_cam = []
             state.correlations = []
+
+            pending = getattr(self, "_movie_metrics_pending_run_ids", set())
+            pending.add(run_id)
+            self._movie_metrics_pending_run_ids = pending
 
             self._submit_background_task(
                 lambda: {
@@ -2040,6 +2154,7 @@ class DdacViewMixin:
         self.slider.setEnabled(enabled)
         self.previous_button.setEnabled(enabled)
         self.play_stop_button.setEnabled(enabled)
+        self.direction_button.setEnabled(enabled)
         self.next_button.setEnabled(enabled)
    
 
@@ -2185,15 +2300,9 @@ class DdacViewMixin:
         """Positionne lignes/scatters en fonction de la courbe cliquée.
 
         Le clic définit un temps unique (lignes verticales) partagé entre
-        P/dPdt/σ/Δλ, déclenche la mesure dP/dt (couple Pstart/Pend) et prépare
-        la sélection de spectre/vidéo associée au temps choisi.
+        P/dPdt/σ/Δλ et prépare la sélection de spectre/vidéo associée
+        au temps choisi.
         """
-
-        if which != "P" and getattr(self, "is_selecting_dp_range", False):
-            # Séquence interrompue : on réinitialise pour éviter des états incohérents
-            self._reset_dp_selection()
-            if hasattr(self, "_report_warning"):
-                self._report_warning("Sélection Pstart/Pend réinitialisée après un clic hors P.")
 
         state = self._get_state_for_run()
         x_time = x
@@ -2217,10 +2326,6 @@ class DdacViewMixin:
             self.x1, self.y1 = x, y
             if hasattr(self, "scatter_P"):
                 self._update_curve_safe(self.scatter_P, [x], [y])
-            if not self.is_selecting_dp_range:
-                self.Pstart, self.tstart, self.is_selecting_dp_range = self.y1, self.x1, True
-            else:
-                self.Pend, self.tend, self.is_selecting_dp_range = self.y1, self.x1, False
         elif which == "dPdt":
             self.x3, self.y3 = x, y
             if hasattr(self, "scatter_dPdt"):
@@ -2236,15 +2341,6 @@ class DdacViewMixin:
                 self._update_curve_safe(self.scatter_dlambda, [x], [y])
         
 
-
-    def _reset_dp_selection(self):
-        """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
-
-        self.is_selecting_dp_range = False
-        self.Pstart = None
-        self.Pend = None
-        self.tstart = None
-        self.tend = None
 
     def _sync_movie_after_click(self, state: Optional[RunViewState]):
         """Synchronise slider/frames après un clic si une vidéo est disponible."""
@@ -2317,7 +2413,7 @@ class DdacViewMixin:
         associée est rappelée via `line_nspec` et le texte d'info.
         """
         state = self._get_state_for_run()
-        if state is None or len(state.index_cam) == 0:
+        if state is None or state.cap is None or len(state.index_cam) == 0:
             return
 
         idx_list = state.index_cam
@@ -2371,25 +2467,44 @@ class DdacViewMixin:
     def f_play_stop_movie(self):
         self.playing_movie = not self.playing_movie
         if self.playing_movie:
-            fps = self.fps_play_spinbox.value()
-            if fps <= 0:
-                fps = 100
-            interval_ms = int(1000 / fps)
-            self.timerMovie.start(interval_ms)
+            self.play_stop_button.setText("⏸")
+            self._apply_movie_timer_interval()
+            self.timerMovie.start()
         else:
             self.timerMovie.stop()
+            self.play_stop_button.setText("▶")
+
+    def _apply_movie_timer_interval(self):
+        fps = self.fps_play_spinbox.value()
+        if fps <= 0:
+            fps = 100
+        interval_ms = max(1, int(1000 / fps))
+        self.timerMovie.setInterval(interval_ms)
+
+    def _on_movie_fps_changed(self, _value: int):
+        if self.playing_movie and self.timerMovie.isActive():
+            self._apply_movie_timer_interval()
+
+    def toggle_movie_direction(self):
+        self.movie_play_direction *= -1
+        if self.movie_play_direction >= 0:
+            self.direction_button.setText("Sens: →")
+        else:
+            self.direction_button.setText("Sens: ←")
 
     def play_movie(self):
         state = self._get_state_for_run()
         if state is None:
             self.timerMovie.stop()
             self.playing_movie = False
+            self.play_stop_button.setText("▶")
             return
 
         nb = len(state.index_cam)
         if nb == 0:
             self.timerMovie.stop()
             self.playing_movie = False
+            self.play_stop_button.setText("▶")
             return
 
         # Déterminer les bornes de lecture en fonction du cadrage / zone_movie
@@ -2397,17 +2512,22 @@ class DdacViewMixin:
         if i_max < i_min:  # cas dégénéré
             self.timerMovie.stop()
             self.playing_movie = False
+            self.play_stop_button.setText("▶")
             return
 
-        # Si l'index courant est en dehors de la zone, on se remet sur le début de la zone
+        step = 1 if self.movie_play_direction >= 0 else -1
+
+        # Si l'index courant est en dehors de la zone, on se remet sur un bord de la zone
         if self.current_index < i_min or self.current_index > i_max:
-            self.current_index = i_min
+            self.current_index = i_min if step > 0 else i_max
         else:
-            # Avancer d'une image dans la zone
-            self.current_index += 1
+            # Avancer/Reculer d'une image dans la zone
+            self.current_index += step
             if self.current_index > i_max:
                 # Boucle dans la zone définie
                 self.current_index = i_min
+            elif self.current_index < i_min:
+                self.current_index = i_max
 
         # Mise à jour du slider et de l'image
         self.slider.blockSignals(True)

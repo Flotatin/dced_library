@@ -30,6 +30,23 @@ from PyQt5.QtWidgets import (
 file_help = r"txt_files\Help.txt"
 file_command = r"txt_files\Command.txt"
 
+
+class _StatusMessageProxy:
+    """Proxy compatible QLabel (setText/text) vers la status bar."""
+
+    def __init__(self, window, default_text: str = ""):
+        self._window = window
+        self._text = default_text
+
+    def setText(self, text):
+        self._text = str(text)
+        if hasattr(self._window, "statusBar"):
+            self._window.statusBar().showMessage(self._text)
+
+    def text(self):
+        return self._text
+
+
 def creat_spin_label(spinbox, label_text):
     layout = QHBoxLayout()
     label = QLabel(label_text)
@@ -480,8 +497,10 @@ class UiLayoutMixin:
         self.tools_tabs.addTab(self.tab_tools_checks, "Tools & Check")
 
     def _setup_text_box_msg(self):
-        self.text_box_msg = QLabel("Good Luck and Have Fun")
-        self.grid_layout.addWidget(self.text_box_msg, 3, 2, 1, 1)
+        # Évite de consommer une ligne complète de la grille :
+        # on affiche les messages uniquement dans la status bar.
+        self.text_box_msg = _StatusMessageProxy(self, "Good Luck and Have Fun")
+        self.text_box_msg.setText("Good Luck and Have Fun")
 
     def _setup_file_gestion(self):
         group_fichiers = QGroupBox("File gestion")
