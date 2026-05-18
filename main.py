@@ -165,12 +165,6 @@ class MainWindow(
         self.liste_objets = []  # liste des CEDd chargés (legacy)
         self.index_select = -1
 
-        self.is_selecting_dp_range: bool = False
-        """True après un clic sur Pstart, en attente du clic Pend."""
-        self.Pstart: Optional[float] = None
-        self.Pend: Optional[float] = None
-        self.tstart: Optional[float] = None
-        self.tend: Optional[float] = None
         self.x1: float = 0.0
         self.y1: float = 0.0
         self.x5: float = 0.0

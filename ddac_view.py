@@ -562,9 +562,15 @@ class DdacViewMixin:
 
         for r in self.fit_regions:
             r.setBounds((tmin, tmax))
+        for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
+            zone = getattr(self, attr, None)
+            if zone is not None:
+                zone.setBounds((tmin, tmax))
 
         # initialiser une région cohérente avec les spinbox
         self._apply_fit_from_spin()
+        if self._ddac_multi_zone_range is None:
+            self._set_default_ddac_dpdt_zone_range()
 
 
     def _get_run_color(self, state: RunViewState) -> str:
@@ -596,7 +602,6 @@ class DdacViewMixin:
         if self._block_fit:
             return
         self._apply_fit_from_spin()
-        self._update_ddac_multi_zone_range()
 
     def _effective_dpdt_window(self, size: int) -> int:
         window = int(self.dpdt_range_entry.value()) if hasattr(self, "dpdt_range_entry") else 3
@@ -636,7 +641,6 @@ class DdacViewMixin:
         for r in self.fit_regions:
             r.setRegion((t0, t1))
         self._block_fit = False
-        self._update_ddac_multi_zone_range()
 
 
         # -------------------------
@@ -675,7 +679,6 @@ class DdacViewMixin:
             self.index_stop_entry.blockSignals(False)
 
         self._block_fit = False
-        self._update_ddac_multi_zone_range()
 
     def _compute_ddac_multi_zone_range(self):
         if not hasattr(self, "index_start_entry") or not hasattr(self, "index_stop_entry"):
@@ -711,18 +714,28 @@ class DdacViewMixin:
             start_time, stop_time = stop_time, start_time
         return (start_time, stop_time)
 
-    def _update_ddac_multi_zone_range(self) -> None:
-        if self._ddac_multi_zone_syncing:
-            return
+    def _set_default_ddac_dpdt_zone_range(self) -> None:
+        """Initialise la zone dP/dt sans la lier aux bornes du multi-fit."""
 
         zone_range = self._compute_ddac_multi_zone_range()
-        self._ddac_multi_zone_range = zone_range
         if zone_range is None:
             return
+        self._ddac_multi_zone_range = zone_range
+        self._sync_ddac_dpdt_zone_items(zone_range)
+
+    def _sync_ddac_dpdt_zone_items(self, zone_range) -> None:
         for attr in ("zone_multi_P", "zone_multi_dPdt", "zone_multi_diff_int"):
             zone = getattr(self, attr, None)
             if zone is not None:
                 zone.setRegion(zone_range)
+
+    def _update_ddac_multi_zone_range(self) -> None:
+        if self._ddac_multi_zone_syncing:
+            return
+        if self._ddac_multi_zone_range is None:
+            self._set_default_ddac_dpdt_zone_range()
+            return
+        self._sync_ddac_dpdt_zone_items(self._ddac_multi_zone_range)
         self._update_ddac_zone_annotations()
 
     def _apply_ddac_multi_zone_visibility(self) -> None:
@@ -773,35 +786,9 @@ class DdacViewMixin:
                     continue
                 zone.setRegion((start, stop))
 
-            start_index, stop_index = self._indices_from_ddac_range(start, stop)
-            self._set_batch_indices_from_zone(start_index, stop_index)
             self._update_ddac_zone_annotations()
         finally:
             self._ddac_multi_zone_syncing = False
-
-    def _indices_from_ddac_range(self, start: float, stop: float):
-        time_values = self._spec_time
-        if time_values is None or len(time_values) == 0:
-            start_index = int(round(start))
-            stop_index = int(round(stop))
-            return (min(start_index, stop_index), max(start_index, stop_index))
-
-        time_array = np.asarray(time_values, dtype=float)
-        start_index = int(np.nanargmin(np.abs(time_array - start)))
-        stop_index = int(np.nanargmin(np.abs(time_array - stop)))
-        return (min(start_index, stop_index), max(start_index, stop_index))
-
-    def _set_batch_indices_from_zone(self, start_index: int, stop_index: int) -> None:
-        if start_index > stop_index:
-            start_index, stop_index = stop_index, start_index
-        if hasattr(self, "index_start_entry"):
-            self.index_start_entry.blockSignals(True)
-            self.index_start_entry.setValue(start_index)
-            self.index_start_entry.blockSignals(False)
-        if hasattr(self, "index_stop_entry"):
-            self.index_stop_entry.blockSignals(True)
-            self.index_stop_entry.setValue(stop_index)
-            self.index_stop_entry.blockSignals(False)
 
     def _get_reference_pressure_series(self):
         t = np.asarray(getattr(self, "_ddac_pressure_ref_time", []), dtype=float)
@@ -2316,15 +2303,9 @@ class DdacViewMixin:
         """Positionne lignes/scatters en fonction de la courbe cliquée.
 
         Le clic définit un temps unique (lignes verticales) partagé entre
-        P/dPdt/σ/Δλ, déclenche la mesure dP/dt (couple Pstart/Pend) et prépare
-        la sélection de spectre/vidéo associée au temps choisi.
+        P/dPdt/σ/Δλ et prépare la sélection de spectre/vidéo associée
+        au temps choisi.
         """
-
-        if which != "P" and getattr(self, "is_selecting_dp_range", False):
-            # Séquence interrompue : on réinitialise pour éviter des états incohérents
-            self._reset_dp_selection()
-            if hasattr(self, "_report_warning"):
-                self._report_warning("Sélection Pstart/Pend réinitialisée après un clic hors P.")
 
         state = self._get_state_for_run()
         x_time = x
@@ -2348,10 +2329,6 @@ class DdacViewMixin:
             self.x1, self.y1 = x, y
             if hasattr(self, "scatter_P"):
                 self._update_curve_safe(self.scatter_P, [x], [y])
-            if not self.is_selecting_dp_range:
-                self.Pstart, self.tstart, self.is_selecting_dp_range = self.y1, self.x1, True
-            else:
-                self.Pend, self.tend, self.is_selecting_dp_range = self.y1, self.x1, False
         elif which == "dPdt":
             self.x3, self.y3 = x, y
             if hasattr(self, "scatter_dPdt"):
@@ -2367,15 +2344,6 @@ class DdacViewMixin:
                 self._update_curve_safe(self.scatter_dlambda, [x], [y])
         
 
-
-    def _reset_dp_selection(self):
-        """Réinitialise les variables de mesure dP/dt en cas d'usage inattendu."""
-
-        self.is_selecting_dp_range = False
-        self.Pstart = None
-        self.Pend = None
-        self.tstart = None
-        self.tend = None
 
     def _sync_movie_after_click(self, state: Optional[RunViewState]):
         """Synchronise slider/frames après un clic si une vidéo est disponible."""
