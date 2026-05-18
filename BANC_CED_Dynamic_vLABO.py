@@ -1154,64 +1154,80 @@ class MainWindow(QMainWindow, UiLayoutMixin, SpectrumViewMixin, DdacViewMixin):
         if state is None:
             return
 
-        data = []
-        show_dPdt = self.var_bouton[0].isChecked()
-        show_T = self.var_bouton[1].isChecked()
-        show_piezo = self.var_bouton[2].isChecked()
-        show_corr = self.var_bouton[3].isChecked()
-        show_P = self.var_bouton[6].isChecked()
+        show_flags = (
+            bool(self.var_bouton[0].isChecked()),  # dPdt
+            bool(self.var_bouton[1].isChecked()),  # T
+            bool(self.var_bouton[2].isChecked()),  # piezo
+            bool(self.var_bouton[3].isChecked()),  # corr
+            bool(self.var_bouton[6].isChecked()),  # P
+        )
+        visibility_cache = getattr(state, "_print_visibility_cache", None)
+        if visibility_cache is None:
+            visibility_cache = {}
+            setattr(state, "_print_visibility_cache", visibility_cache)
 
-        for curve in state.curves_T:
-            curve.setVisible(show_T)
-            if show_T:
+        def _set_visible_if_changed(cache_key, items, visible):
+            previous = visibility_cache.get(cache_key)
+            item_count = sum(1 for item in items if item is not None)
+            current = (visible, item_count)
+            if previous == current:
+                return False
+            for item in items:
+                if item is not None:
+                    item.setVisible(visible)
+            visibility_cache[cache_key] = current
+            return True
+
+        changed = False
+        show_dPdt, show_T, show_piezo, show_corr, show_P = show_flags
+        changed |= _set_visible_if_changed("T", state.curves_T, show_T)
+        changed |= _set_visible_if_changed("P", state.curves_P, show_P)
+        changed |= _set_visible_if_changed("dPdt", state.curves_dPdt, show_dPdt)
+        changed |= _set_visible_if_changed("sigma", state.curves_sigma, show_P)
+        changed |= _set_visible_if_changed("piezo", [state.piezo_curve], show_piezo)
+        changed |= _set_visible_if_changed("corr", [state.corr_curve], show_corr)
+
+        if not changed:
+            return
+
+        y_min = None
+        y_max = None
+
+        def _update_min_max(curves, visible):
+            nonlocal y_min, y_max
+            if not visible:
+                return
+            for curve in curves:
+                if curve is None:
+                    continue
                 y = curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
+                if y is None or not len(y):
+                    continue
+                y_data = np.asarray(y, dtype=float)
+                finite = y_data[np.isfinite(y_data)]
+                if finite.size == 0:
+                    continue
+                local_min = float(np.min(finite))
+                local_max = float(np.max(finite))
+                y_min = local_min if y_min is None else min(y_min, local_min)
+                y_max = local_max if y_max is None else max(y_max, local_max)
 
-        for curve in state.curves_P:
-            curve.setVisible(show_P)
-            if show_P:
-                y = curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
+        _update_min_max(state.curves_T, show_T)
+        _update_min_max(state.curves_P, show_P)
+        _update_min_max(state.curves_dPdt, show_dPdt)
+        _update_min_max(state.curves_sigma, show_P)
+        _update_min_max([state.piezo_curve], show_piezo)
+        _update_min_max([state.corr_curve], show_corr)
 
-        for curve in state.curves_dPdt:
-            curve.setVisible(show_dPdt)
-            if show_dPdt:
-                y = curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
+        if y_min is not None and y_max is not None and y_min != y_max:
+            self.pg_dPdt.setYRange(y_min * 1.01, y_max * 1.01, padding=0)
 
-        for curve in state.curves_sigma:
-            curve.setVisible(show_P)
-            if show_P:
-                y = curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
+        if show_P != visibility_cache.get("_last_P_autorange"):
+            self.pg_P.enableAutoRange(axis='y', enable=True)
+            self.pg_sigma.enableAutoRange(axis='y', enable=True)
+            visibility_cache["_last_P_autorange"] = show_P
 
-        if state.piezo_curve is not None:
-            state.piezo_curve.setVisible(show_piezo)
-            if show_piezo:
-                y = state.piezo_curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
-
-        if state.corr_curve is not None:
-            state.corr_curve.setVisible(show_corr)
-            if show_corr:
-                y = state.corr_curve.getData()[1]
-                if y is not None:
-                    data.extend(y.tolist())
-
-        if data:
-            y_min = np.nanmin(data)
-            y_max = np.nanmax(data)
-            if np.isfinite(y_min) and np.isfinite(y_max) and y_min != y_max:
-                self.pg_dPdt.setYRange(y_min * 1.01, y_max * 1.01, padding=0)
-
-        self.pg_P.enableAutoRange(axis='y', enable=True)
         self.pg_dPdt.enableAutoRange(axis='y', enable=True)
-        self.pg_sigma.enableAutoRange(axis='y', enable=True)
 #########################################################################################################################################################################################
 #? COMMANDE self.update 
     def f_gauge_select(self):
