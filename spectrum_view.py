@@ -1672,3 +1672,4 @@ class SpectrumViewMixin:
         self.bit_bypass = False
 
         self.Update_Print()
+        self._sync_spectrum_time_marker_from_index(self.index_spec)

@@ -1622,28 +1622,47 @@ class CEDd:
         else:
             print("CALCULE FAILED NO DATA")
 
-    def Print(self, num_spec=0, data=[], Oscilo=False):
+    def Print(self, num_spec=0, data=None, Oscilo=False):
+        if data is None:
+            data = []
         if data == [] and Oscilo == False:
             self.Spectra[num_spec].Print()
         else:
+            if isinstance(data, str):
+                data = [data]
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 
-            # --- Tracer les données ---
-            for i in range(len(data)):
-                # Filtrer les valeurs non-None dans data[i]
-                mask = ~pd.isna(self.Summary[data[i]])
-                x_values = self.Summary["n°Spec"][mask]  # Axe X par défaut : n°Spec
-                y_values = self.Summary[data[i]][mask]  # Axe Y : valeurs non-None
+            for column_name in data:
+                if column_name not in self.Summary.columns:
+                    print(f"Print: colonne '{column_name}' absente de Summary.")
+                    continue
+
+                # Force un axe Y numérique : des pressions lues comme texte sont
+                # sinon interprétées par matplotlib comme des catégories, ce qui
+                # crée un tick par valeur et donne une courbe artificiellement droite.
+                y_values = pd.to_numeric(self.Summary[column_name], errors="coerce")
+                mask = y_values.notna()
+
+                if not mask.any():
+                    print(f"Print: aucune valeur numérique pour la colonne '{column_name}'.")
+                    continue
+
+                x_values = pd.to_numeric(self.Summary["n°Spec"], errors="coerce")
 
                 # Si self.Time_spectrum existe et a la même longueur, l'utiliser comme axe X
                 if hasattr(self, 'Time_spectrum') and self.Time_spectrum is not None and len(self.Time_spectrum) == len(self.Summary):
-                    x_values = np.array(self.Time_spectrum)[mask]
+                    x_values = pd.Series(np.array(self.Time_spectrum), index=self.Summary.index)
+
+                x_values = x_values[mask]
+                y_values = y_values[mask]
 
                 # Tracer la courbe
-                ax1.plot(x_values, y_values, '+-', label=data[i])
+                ax1.plot(x_values, y_values, '+-', label=column_name)
 
             # Configurer l'axe Y pour voir le pulse (ex: 0 à 5)
-            ax1.set_ylim(0, 5)  # Ajuste cette plage selon tes données réelles
+            # échelle très différente et doivent rester lisibles en autoscale.
+            ax1.relim()
+            ax1.autoscale_view()
             ax1.set_xlabel("Temps (s) ou n°Spec")
             ax1.set_ylabel("Valeur")
             ax1.legend(loc="best")

@@ -300,6 +300,11 @@ class DdacViewMixin:
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
+        self.freeze_phase_box = QCheckBox("figer phases", self)
+        self.freeze_phase_box.setChecked(False)
+        self.freeze_phase_box.toggled.connect(self._on_freeze_phase_toggled)
+        controls_layout.addWidget(self.freeze_phase_box)
+        
         self.dpdt_range_entry = QSpinBox()
         self.dpdt_range_entry.setRange(2, 100)
         self.dpdt_range_entry.setValue(3)
@@ -1178,18 +1183,34 @@ class DdacViewMixin:
             return
         element = self.phase_element_selector.currentText().strip() or "H2O"
         zones = state.phase_tracks.get(element, [])
+        freeze_phases = bool(getattr(self, "freeze_phase_box", None) and self.freeze_phase_box.isChecked())
+
+        
         for idx, zone in enumerate(zones):
-            reg = pg.LinearRegionItem(values=(zone["start"], zone["end"]), movable=True)
-            reg.setBrush(pg.mkBrush(*self._phase_color_for_name(zone["name"], element)))
-            self._set_region_pen(reg, pg.mkPen(255, 255, 255, 110, width=1))
-            reg.setZValue(8_500 + idx)
-            reg.sigRegionChangeFinished.connect(partial(self._on_phase_region_changed, idx=idx))
+            reg = pg.LinearRegionItem(values=(zone["start"], zone["end"]), movable=not freeze_phases)
+
+            r, g, b, a = self._phase_color_for_name(zone["name"], element)
+            if freeze_phases:
+                a = max(15, int(a * 0.45))
+            reg.setBrush(pg.mkBrush(r, g, b, a))
+
+            if freeze_phases:
+                self._set_region_pen(reg, pg.mkPen(255, 255, 255, 70, width=1))
+                reg.setZValue(2_000 + idx)
+            else:
+                self._set_region_pen(reg, pg.mkPen(255, 255, 255, 110, width=1))
+                reg.setZValue(8_500 + idx)
+                reg.sigRegionChangeFinished.connect(partial(self._on_phase_region_changed, idx=idx))
+
             self.pg_P.addItem(reg)
             self.phase_regions.append(reg)
         self._apply_phase_selection_visuals()
 
     def _on_phase_visibility_toggled(self, _checked):
         self._refresh_phase_list()
+        self._render_phase_regions()
+    
+    def _on_freeze_phase_toggled(self, _checked):
         self._render_phase_regions()
 
     def _on_phase_element_changed(self, text):
@@ -1221,7 +1242,12 @@ class DdacViewMixin:
             line.setPen(pen)
 
     def _apply_phase_selection_visuals(self):
+        freeze_phases = bool(getattr(self, "freeze_phase_box", None) and self.freeze_phase_box.isChecked())
         for idx, reg in enumerate(getattr(self, "phase_regions", [])):
+            if freeze_phases:
+                self._set_region_pen(reg, pg.mkPen(255, 255, 255, 70, width=1))
+                reg.setZValue(2_000 + idx)
+                continue
             if idx == self.selected_phase_index:
                 self._set_region_pen(reg, pg.mkPen(255, 255, 255, 220, width=2))
                 reg.setZValue(100)
@@ -2192,10 +2218,10 @@ class DdacViewMixin:
         if idx_spec is None:
             self.f_text_CEDd_print(t)
             return
-        spec_nb = state.spectre_number[idx_spec]
 
-        if self.spectrum_select_box.isChecked() and int(spec_nb) != self.index_spec:
-            self.index_spec = int(spec_nb)
+        target_spec_index = int(idx_spec)
+        if self.spectrum_select_box.isChecked() and target_spec_index != self.index_spec:
+            self.index_spec = target_spec_index
             self.spinbox_spec_index.blockSignals(True)
             self.spinbox_spec_index.setValue(self.index_spec)
             self.spinbox_spec_index.blockSignals(False)
@@ -2280,6 +2306,33 @@ class DdacViewMixin:
         if idx is None:
             return None
         return float(state.time[idx])
+    
+    def _sync_spectrum_time_marker_from_index(self, spec_index: int):
+        """Synchronise les barres temporelles dDAC avec l'index de spectre chargé."""
+
+        state = self._get_state_for_run()
+        if state is None or state.time is None or state.spectre_number is None:
+            return
+
+        bound = min(len(state.time), len(state.spectre_number))
+        if spec_index < 0 or spec_index >= bound:
+            return
+
+        spec_time = float(state.time[spec_index])
+        spec_number = float(state.spectre_number[spec_index])
+
+        self.selected_spec_time = spec_time
+        self.line_t_spec_P.setPos(spec_time)
+        self.line_t_spec_sigma.setPos(spec_time)
+        self.line_t_spec_dPdt.setPos(spec_time)
+        self.line_t_spec_dlambda.setPos(spec_number)
+        self.x5 = spec_number
+
+        if state.t_cam and 0 <= self.current_index < len(state.t_cam):
+            frame_time = state.t_cam[self.current_index]
+        else:
+            frame_time = 0.0
+        self.f_text_CEDd_print(frame_time)
     
 
     def _get_ddac_target_from_pos(self, pos):

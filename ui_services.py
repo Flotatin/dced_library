@@ -5,8 +5,16 @@ import traceback
 from typing import Optional, Any, Dict, List
 
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PyQt5.QtCore import QEvent, Qt, pyqtSlot
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QAbstractSpinBox,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QTextEdit,
+)
 
 from domain_math import (
     fit_score,
@@ -1049,6 +1057,18 @@ class FitWorkflowMixin:
 class KeyboardShortcutMixin:
     """Gestion centralisée des key press events et raccourcis clavier."""
 
+    def _install_keyboard_event_filter(self) -> None:
+        """Intercepte aussi les touches lorsque le focus est sur un widget enfant."""
+        app = QApplication.instance()
+        if app is None or getattr(self, "_keyboard_event_filter_installed", False):
+            return
+        app.installEventFilter(self)
+        self._keyboard_event_filter_installed = True
+
+    def _is_text_entry_widget(self, widget) -> bool:
+        """Évite de déclencher les raccourcis vidéo pendant la saisie de texte."""
+        return isinstance(widget, (QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit))
+
     def _should_ignore_keypress(self, event) -> bool:
         if self.viewer is not None and self.focusWidget() == self.viewer:
             print("focus in Lecroy")
@@ -1098,6 +1118,44 @@ class KeyboardShortcutMixin:
         if key == Qt.Key_H:
             self.spectrum_select_box.setChecked(not self.spectrum_select_box.isChecked())
             return True
+        return False
+    
+    def _handle_movie_shortcuts(self, event) -> bool:
+        """Raccourcis clavier du lecteur vidéo dDAC."""
+        if event.modifiers() != Qt.NoModifier:
+            return False
+
+        focus_widget = self.focusWidget()
+        if self._is_text_entry_widget(focus_widget):
+            return False
+
+        key = event.key()
+        movie_keys = {Qt.Key_Space, Qt.Key_Right, Qt.Key_Left, Qt.Key_Down, Qt.Key_Up}
+        if key not in movie_keys:
+            return False
+
+        play_button = getattr(self, "play_stop_button", None)
+        slider = getattr(self, "slider", None)
+        if play_button is None or slider is None or not play_button.isEnabled():
+            return False
+
+        if key == Qt.Key_Space:
+            if event.isAutoRepeat():
+                return True
+            self.f_play_stop_movie()
+            return True
+        if key == Qt.Key_Right:
+            self.next_image()
+            return True
+        if key == Qt.Key_Left:
+            self.previous_image()
+            return True
+        if key in (Qt.Key_Down, Qt.Key_Up):
+            if event.isAutoRepeat():
+                return True
+            self.toggle_movie_direction()
+            return True
+
         return False
 
     def _run_calcul_study(self, mini: bool):
@@ -1156,11 +1214,28 @@ class KeyboardShortcutMixin:
         if set_bypass:
             self.bit_bypass = False
 
+    def eventFilter(self, obj, event):
+        if (
+            event.type() == QEvent.KeyPress
+            and QApplication.activeWindow() == self
+            and not self._should_ignore_keypress(event)
+            and self._handle_movie_shortcuts(event)
+        ):
+            event.accept()
+            return True
+        parent_event_filter = getattr(super(), "eventFilter", None)
+        if parent_event_filter is None:
+            return False
+        return parent_event_filter(obj, event)
+    
     def keyPressEvent(self, event):
         key = event.key()
         modifiers = event.modifiers()
 
         if self._should_ignore_keypress(event):
+            return
+        if self._handle_movie_shortcuts(event):
+            event.accept()
             return
         if self._handle_python_shortcuts(key, modifiers):
             return
