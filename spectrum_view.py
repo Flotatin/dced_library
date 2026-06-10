@@ -238,7 +238,7 @@ class SpectrumViewMixin:
 
         self._spectra_layout.addLayout(layout_check)
         self.SpectraBox.setLayout(self._spectra_layout)
-        self.grid_layout.addWidget(self.SpectraBox, 0, 2, 3, 1)
+        self.grid_layout.addWidget(self.SpectraBox, 1, 1, 1, 1)
 
     def _connect_spectrum_events(self) -> None:
         # ================== EVENTS PyQtGraph ==================

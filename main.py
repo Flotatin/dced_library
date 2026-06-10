@@ -222,14 +222,14 @@ class MainWindow(
         central_widget.setLayout(self.grid_layout)
         self.setCentralWidget(central_widget)
 
-        self._setup_file_box()           # (4, 0) -> file_spectro/oscilo/movie
-        self._setup_tools_tabs()         # (0, 1)
-        self._setup_gauge_info()         # (1, 2)
-        self._setup_spectrum_box()       # (0, 2)
-        self._setup_ddac_box()           # (0, 3)
-        self._setup_file_gestion()       # (2, 0)
-        self._setup_python_kernel()      # (2, 2)
-        self._setup_text_box_msg()       # (1, 0)
+        self._setup_file_box()           # menus + actions rapides
+        self._setup_tools_tabs()         # panneau secondaire + lignes Peak/Fit
+        self._setup_gauge_info()         # table des pics intégrée au Spectrum
+        self._setup_spectrum_box()       # colonne centrale Spectrum
+        self._setup_ddac_box()           # colonne dDAC / Movie
+        self._setup_file_gestion()       # colonne Fichiers CEDd
+        self._setup_python_kernel()      # page Console du panneau secondaire
+        self._setup_text_box_msg()       # status bar
         self._setup_layout_stretch()
 
         self._apply_theme(self.current_theme)
@@ -242,41 +242,25 @@ class MainWindow(
         self.f_gauge_select()
 
     def toggle_python_kernel(self, checked: bool):
-        """
-        Affiche/cache le kernel Python et réarrange la grille :
-        - si caché :
-            SpectraBox: (0,2, 2,1)
-            AddBox    : (2,2, 1,1)
-        - si affiché :
-        SpectraBox: (0,2, 1,1)
-        AddBox    : (1,2, 1,1)
-        promptBox : (2,2, 1,1)
-        """
+        """Affiche/cache le kernel Python dans le panneau secondaire compact."""
+        if not hasattr(self, "promptBox"):
+            return
         if checked:
-            # bouton enfoncé -> on montre le kernel
+            self.python_kernel_button.blockSignals(True)
+            self.python_kernel_button.setChecked(True)
             self.python_kernel_button.setText("Hide Python Kernel")
+            self.python_kernel_button.blockSignals(False)
             self.promptBox.show()
-
-            # retirer puis replacer pour être sûr
-            self.grid_layout.removeWidget(self.SpectraBox)
-            #self.grid_layout.removeWidget(self.AddBox)
-            self.grid_layout.removeWidget(self.promptBox)
-
-            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 2, 1)
-            #self.grid_layout.addWidget(self.AddBox,     1, 2, 1, 1)
-            self.grid_layout.addWidget(self.promptBox,  2, 2, 1, 1)
-
+            if hasattr(self, "_show_secondary_page"):
+                self._show_secondary_page(self.promptBox, "Python Kernel")
         else:
-            # bouton relâché -> on cache le kernel
+            self.python_kernel_button.blockSignals(True)
+            self.python_kernel_button.setChecked(False)
             self.python_kernel_button.setText("Show Python Kernel")
+            self.python_kernel_button.blockSignals(False)
             self.promptBox.hide()
-
-            self.grid_layout.removeWidget(self.SpectraBox)
-            #self.grid_layout.removeWidget(self.AddBox)
-            # promptBox peut rester dans la grille mais caché
-
-            self.grid_layout.addWidget(self.SpectraBox, 0, 2, 3, 1)
-            #self.grid_layout.addWidget(self.AddBox,     2, 2, 1, 1)
+            if getattr(self, "secondary_stack", None) is not None and self.secondary_stack.currentWidget() == self.promptBox:
+                self._hide_secondary_panel()
 
     # ==================================================================
     # ===============   SETUP MODE POUR DEBUG  =========================
@@ -529,7 +513,18 @@ class MainWindow(
             "background-color: rgba{}; selection-background-color: gray;".format(col1)
         )
 
-        # Supprimer les anciens widgets
+        # Supprimer les anciens widgets/coefs dynamiques. Les coefficients sont
+        # ajoutés dans de petits layouts horizontaux, donc on nettoie aussi ces
+        # layouts pour éviter les doublons quand on change de modèle de pic.
+        while getattr(self, "_coef_dynamic_layouts", []):
+            lay = self._coef_dynamic_layouts.pop()
+            while lay.count():
+                item = lay.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            self.ParampicLayout.removeItem(lay)
+
         while self.coef_dynamic_spinbox:
             w = self.coef_dynamic_spinbox.pop()
             self.ParampicLayout.removeWidget(w)
@@ -551,7 +546,7 @@ class MainWindow(
             elif coef == "beta":
                 text = "\u03B2"
             elif coef == "sigma_r":
-                text = "\u03C3 <sub>right<\sub>"
+                text = "\u03C3 <sub>right</sub>"
             elif coef == "expon":
                 text = "m"
             elif coef == "skew":
@@ -564,12 +559,15 @@ class MainWindow(
             spinbox_coef.setSingleStep(0.01)
             spinbox_coef.setValue(1 - i * 1.5)
 
+            spinbox_coef.setMaximumWidth(70)
             layh.addWidget(coef_label)
             layh.addWidget(spinbox_coef)
             self.ParampicLayout.addLayout(layh)
 
             self.coef_dynamic_label.append(coef_label)
-            self.coef_dynamic_spinbox.append(spinbox_coef)   
+            self.coef_dynamic_spinbox.append(spinbox_coef)
+            if hasattr(self, "_coef_dynamic_layouts"):
+                self._coef_dynamic_layouts.append(layh)
             
     def Read_RUN(self, RUN):
         l_P, l_sigma_P, l_lambda, l_fwhm = [], [], [], []
