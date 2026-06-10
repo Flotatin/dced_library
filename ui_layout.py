@@ -363,6 +363,7 @@ class UiLayoutMixin:
         self.spinbox_sigma.valueChanged.connect(
             lambda _value: self._update_fit_window() if getattr(self, "index_pic_select", None) is not None else None
         )
+        controls_layout.addLayout(self.ParampicLayout)
 
         peak_layout.addLayout(self.ParampicLayout)
         peak_layout.addStretch(1)
@@ -380,6 +381,15 @@ class UiLayoutMixin:
 
         if hasattr(self, "fit_start_box"):
             fit_layout.addWidget(self.fit_start_box)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        controls_layout.addWidget(sep)
+
+        # ================== Segment Fit / Multi-fit ==================
+        if hasattr(self, "fit_start_box"):
+            controls_layout.addWidget(self.fit_start_box)
 
         self.spinbox_cycle = QSpinBox()
         self.spinbox_cycle.valueChanged.connect(self.setFocus)

@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QTableWidgetItem, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QCheckBox, QGroupBox, QHBoxLayout, QPushButton, QTableWidgetItem, QVBoxLayout, QWidget
 
 from Bibli_python import CL_FD_Update as CL
 
@@ -104,25 +104,23 @@ class SpectrumViewMixin:
         self.pg_dy.setXLink(self.pg_spectrum)
         container_layout.addWidget(self.pg_spec, stretch=5)
 
-        # ================== Colonne droite : AddBox + Zoom ==================
+        # ================== Ligne basse : table/info jauge uniquement ==================
         right_layout = QHBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
         self._spectrum_right_layout = right_layout
-
-        zoom_index = 0
         if hasattr(self, "AddBox"):
             right_layout.addWidget(self.AddBox)
-            zoom_index = 1
+        container_layout.addLayout(right_layout, stretch=1)
 
-        self.pg_zoom = pg.PlotWidget()
+        # Zoom incrusté dans le spectre pour libérer l'ancien emplacement dédié.
+        self.pg_zoom = pg.PlotWidget(self.pg_spec)
+        self.pg_zoom.setFixedSize(280, 180)
+        self.pg_zoom.move(14, 14)
+        self.pg_zoom.raise_()
         self._stylize_plot(self.pg_zoom, show_grid=False)
         self.pg_zoom.hideAxis('bottom')
         self.pg_zoom.hideAxis('left')
-        right_layout.addWidget(self.pg_zoom)
-        right_layout.setStretch(zoom_index, 1)
-
-        container_layout.addLayout(right_layout, stretch=2)
 
         self._spectra_layout.addWidget(self.spectrum_container)
 
@@ -235,6 +233,12 @@ class SpectrumViewMixin:
         self.vslmfit = QCheckBox("vslmfit", self)
         self.vslmfit.setChecked(False)
         layout_check.addWidget(self.vslmfit)
+
+        self.zoom_toggle_button = QPushButton("Zoom", self)
+        self.zoom_toggle_button.setCheckable(True)
+        self.zoom_toggle_button.setChecked(True)
+        self.zoom_toggle_button.toggled.connect(self.pg_zoom.setVisible)
+        layout_check.addWidget(self.zoom_toggle_button)
 
         self._spectra_layout.addLayout(layout_check)
         self.SpectraBox.setLayout(self._spectra_layout)
