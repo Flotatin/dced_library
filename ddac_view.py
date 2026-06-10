@@ -382,7 +382,7 @@ class DdacViewMixin:
 
         group_graphique.setLayout(layout_graphique)
 
-        self.grid_layout.addWidget(group_graphique, 0, 3, 3, 1)
+        self.grid_layout.addWidget(group_graphique, 1, 2, 1, 1)
 
         # Timer Qt pour le mode "lecture"
         self.timerMovie = QTimer(self)
