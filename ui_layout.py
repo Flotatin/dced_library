@@ -400,6 +400,15 @@ class UiLayoutMixin:
         if hasattr(self, "fit_start_box"):
             controls_layout.addWidget(self.fit_start_box)
 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        self.compact_controls_layout.addWidget(sep)
+
+        # ================== Segment Fit / Multi-fit ==================
+        if hasattr(self, "fit_start_box"):
+            self.compact_controls_layout.addWidget(self.fit_start_box)
+
         self.spinbox_cycle = QSpinBox()
         self.spinbox_cycle.valueChanged.connect(self.setFocus)
         self.spinbox_cycle.setRange(0, 10)
