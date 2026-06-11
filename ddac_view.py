@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QSlider,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from Bibli_python import CL_FD_Update as CL
@@ -285,8 +286,9 @@ class DdacViewMixin:
         # ================== INTÉGRATION WIDGET GRAPHIQUE ==================
         layout_graphique.addWidget(self.pg_ddac)
 
-        # ================== CONTROLES Qt (slider + boutons) ==================
-        controls_layout = QHBoxLayout()
+        # ================== OPTIONS dDAC (affichées via le menu dDAC) ==================
+        self.ddac_options_widget = QGroupBox("Options dDAC")
+        controls_layout = QHBoxLayout(self.ddac_options_widget)
 
         self.label_CED = QLabel('CEDd file select:', self)
         self.label_CED.setFont(QFont("Arial", 8))
@@ -308,7 +310,9 @@ class DdacViewMixin:
         self.dpdt_range_entry = QSpinBox()
         self.dpdt_range_entry.setRange(2, 100)
         self.dpdt_range_entry.setValue(3)
+        controls_layout.addWidget(QLabel("dP/dt range:"))
         controls_layout.addWidget(self.dpdt_range_entry)
+        self.ddac_options_widget.setLayout(controls_layout)
         self.phase_patterns_path = os.path.join(os.path.dirname(__file__), "H2O.txt")
         if not os.path.exists(self.phase_patterns_path):
             self.phase_patterns_path = os.path.join(os.path.dirname(__file__), "phase_patterns.txt")
@@ -377,12 +381,22 @@ class DdacViewMixin:
         self.pg_sigma.addItem(self.zone_multi_diff_int)
         self._connect_ddac_multi_zone_signals()
 
-        layout_graphique.addLayout(controls_layout)
-        layout_graphique.addLayout(self._build_phase_controls())
+        phase_layout = self._build_phase_controls()
+        self.phase_controls_widget = QWidget()
+        self.phase_controls_widget.setLayout(phase_layout)
+        if hasattr(self, "secondary_stack"):
+            self.secondary_stack.addWidget(self.ddac_options_widget)
+            self.secondary_stack.addWidget(self.phase_controls_widget)
+        else:
+            layout_graphique.addWidget(self.ddac_options_widget)
+            layout_graphique.addWidget(self.phase_controls_widget)
+
+        if hasattr(self, "_populate_ddac_runtime_menu"):
+            self._populate_ddac_runtime_menu()
 
         group_graphique.setLayout(layout_graphique)
 
-        self.grid_layout.addWidget(group_graphique, 0, 3, 3, 1)
+        self.grid_layout.addWidget(group_graphique, 1, 2, 1, 1)
 
         # Timer Qt pour le mode "lecture"
         self.timerMovie = QTimer(self)
