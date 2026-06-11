@@ -348,9 +348,9 @@ class UiLayoutMixin:
     def _setup_tab_gauge(self):
         """Ligne compacte unique Peak/Gauge + Fit/Multi-fit toujours visible."""
 
-        controls_box = QGroupBox("Peak / Gauge / Fit / Multi-fit")
+        self.peak_fit_line_box = QGroupBox("Peak / Gauge / Fit / Multi-fit")
         # Layout unique pour la ligne Peak/Gauge/Fit/Multi-fit.
-        self.peak_fit_line_layout = QHBoxLayout(controls_box)
+        self.peak_fit_line_layout = QHBoxLayout(self.peak_fit_line_box)
         self.peak_fit_line_layout.setContentsMargins(6, 4, 6, 4)
         self.peak_fit_line_layout.setSpacing(7)
 
@@ -460,6 +460,15 @@ class UiLayoutMixin:
         if hasattr(self, "fit_start_box"):
             self.peak_fit_line_layout.addWidget(self.fit_start_box)
 
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        self.peak_fit_line_layout.addWidget(sep)
+
+        # ================== Segment Fit / Multi-fit ==================
+        if hasattr(self, "fit_start_box"):
+            self.peak_fit_line_layout.addWidget(self.fit_start_box)
+
         self.spinbox_cycle = QSpinBox()
         self.spinbox_cycle.valueChanged.connect(self.setFocus)
         self.spinbox_cycle.setRange(0, 10)
@@ -527,7 +536,7 @@ class UiLayoutMixin:
         self.peak_fit_line_layout.addWidget(self.multi_fit_button)
         self.peak_fit_line_layout.addStretch(1)
 
-        self.grid_layout.addWidget(controls_box, 2, 0, 1, 3)
+        self.grid_layout.addWidget(self.peak_fit_line_box, 2, 0, 1, 3)
 
     def _setup_tab_help_and_commande(self):
         self.tab_help_and_commande = QWidget()
