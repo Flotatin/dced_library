@@ -68,7 +68,7 @@ class UiLayoutMixin:
         self.grid_layout.setColumnStretch(0, 1)   # Fichiers CEDd
         self.grid_layout.setColumnStretch(1, 5)   # Spectrum
         self.grid_layout.setColumnStretch(2, 5)   # dDAC / Movie
-        self.grid_layout.setColumnStretch(3, 0)   # panneau secondaire : 0 tant qu'il est masqué
+        self.grid_layout.setColumnStretch(3, 2)   # panneau secondaire masqué par défaut
         self.grid_layout.setRowStretch(0, 0)
         self.grid_layout.setRowStretch(1, 5)
         self.grid_layout.setRowStretch(2, 0)
@@ -88,20 +88,15 @@ class UiLayoutMixin:
         self.loaded_filename_oscilo = file_oscilo
         self.loaded_filename_movie = file_movie
 
-        # Labels conservés pour les services existants qui les mettent à jour
-        # et affichés dans la barre haute pour garder le nom des fichiers visibles.
+        # Labels conservés pour les services existants qui les mettent à jour.
         self.dir_label_spectro = QLabel("No file spectro", self)
         self.dir_label_oscilo = QLabel("No file oscilo", self)
         self.dir_label_movie = QLabel("No file movie", self)
-        for label in (self.dir_label_spectro, self.dir_label_oscilo, self.dir_label_movie):
-            label.setMinimumWidth(120)
-            label.setMaximumWidth(220)
 
         menu_bar = self.menuBar()
         self.menu_fichier = menu_bar.addMenu("Fichier")
         self.menu_affichage = menu_bar.addMenu("Affichage")
         self.menu_spectrum = menu_bar.addMenu("Spectrum")
-        self.menu_ddac = menu_bar.addMenu("dDAC")
         self.menu_outils = menu_bar.addMenu("Outils")
 
         self.action_select_spectro = QAction("Ouvrir Spectrum...", self)
@@ -148,12 +143,6 @@ class UiLayoutMixin:
         quick_layout.addWidget(self.folder_button)
         quick_layout.addWidget(QLabel("Spec:"))
         quick_layout.addWidget(self.spinbox_spec_index)
-        quick_layout.addWidget(QLabel("S:"))
-        quick_layout.addWidget(self.dir_label_spectro)
-        quick_layout.addWidget(QLabel("O:"))
-        quick_layout.addWidget(self.dir_label_oscilo)
-        quick_layout.addWidget(QLabel("M:"))
-        quick_layout.addWidget(self.dir_label_movie)
         menu_bar.setCornerWidget(quick_bar, Qt.TopRightCorner)
 
     def _setup_tools_tabs(self):
@@ -185,7 +174,6 @@ class UiLayoutMixin:
         secondary_layout.addWidget(self.secondary_stack)
         self.secondary_panel.setLayout(secondary_layout)
         self.secondary_panel.hide()
-        self.grid_layout.setColumnStretch(3, 0)
         self.grid_layout.addWidget(self.secondary_panel, 1, 3, 1, 1)
 
     def _show_secondary_page(self, widget, title: str):
@@ -194,7 +182,6 @@ class UiLayoutMixin:
         self.secondary_panel_title.setText(title)
         self.secondary_stack.setCurrentWidget(widget)
         self.secondary_panel.show()
-        self.grid_layout.setColumnStretch(3, 2)
 
     def _hide_secondary_panel(self):
         if (
@@ -208,7 +195,6 @@ class UiLayoutMixin:
             self.python_kernel_button.blockSignals(False)
             self.promptBox.hide()
         self.secondary_panel.hide()
-        self.grid_layout.setColumnStretch(3, 0)
 
     def _sync_checkable_action(self, action, checkbox):
         action.setCheckable(True)
@@ -224,7 +210,7 @@ class UiLayoutMixin:
         self.menu_affichage.addAction(self.theme_toggle_button)
         self.menu_affichage.addSeparator()
 
-        ddac_menu = self.menu_ddac.addMenu("Courbes")
+        ddac_menu = self.menu_affichage.addMenu("Courbes dDAC")
         for text, checkbox in (
             ("dP/dt", self.chk_show_dpdt),
             ("T", self.chk_show_T),
@@ -236,7 +222,7 @@ class UiLayoutMixin:
             action = QAction(text, self)
             ddac_menu.addAction(self._sync_checkable_action(action, checkbox))
 
-        sources_menu = self.menu_ddac.addMenu("Sources")
+        sources_menu = self.menu_affichage.addMenu("Sources")
         for text, checkbox in (
             ("Utiliser Movie file", self.chk_use_movie),
             ("Utiliser Oscillo file", self.chk_use_oscillo),
@@ -259,35 +245,6 @@ class UiLayoutMixin:
         kernel_action = QAction("Console Python", self)
         kernel_action.triggered.connect(lambda: self.toggle_python_kernel(True))
         self.menu_outils.addAction(kernel_action)
-
-    def _populate_ddac_runtime_menu(self):
-        """Ajoute au menu dDAC les contrôles créés par la vue dDAC."""
-        if getattr(self, "_ddac_runtime_menu_ready", False):
-            return
-        self._ddac_runtime_menu_ready = True
-
-        self.menu_ddac.addSeparator()
-        selection_menu = self.menu_ddac.addMenu("Sélection")
-        for text, checkbox in (
-            ("Clic frame (m)", self.movie_select_box),
-            ("Clic spectrum (h)", self.spectrum_select_box),
-            ("Figer phases", self.freeze_phase_box),
-            ("Afficher phases", self.phase_visible_box),
-        ):
-            action = QAction(text, self)
-            selection_menu.addAction(self._sync_checkable_action(action, checkbox))
-
-        options_action = QAction("Options dDAC...", self)
-        options_action.triggered.connect(
-            lambda: self._show_secondary_page(self.ddac_options_widget, "Options dDAC")
-        )
-        self.menu_ddac.addAction(options_action)
-
-        dac_element_action = QAction("DAC Element...", self)
-        dac_element_action.triggered.connect(
-            lambda: self._show_secondary_page(self.phase_controls_widget, "DAC Element")
-        )
-        self.menu_ddac.addAction(dac_element_action)
 
     def _setup_tab_data_treatment(self):
         self.tab_data = QWidget()
@@ -346,19 +303,17 @@ class UiLayoutMixin:
         self.secondary_stack.addWidget(self.tab_data)
 
     def _setup_tab_gauge(self):
-        """Ligne compacte unique Peak/Gauge + Fit/Multi-fit toujours visible."""
+        """Lignes compactes Peak/Gauge et Fit/Multi toujours visibles."""
 
-        controls_box = QGroupBox("Peak / Gauge / Fit / Multi-fit")
-        # Garder le layout en attribut évite toute ambiguïté avec l'ancien
-        # refactor et garantit que la ligne compacte reste accessible après setup.
-        self.compact_controls_layout = QHBoxLayout(controls_box)
-        self.compact_controls_layout.setContentsMargins(6, 4, 6, 4)
-        self.compact_controls_layout.setSpacing(7)
+        # ================== Ligne Peak / Gauge ==================
+        peak_box = QGroupBox("Peak / Gauge")
+        peak_layout = QHBoxLayout(peak_box)
+        peak_layout.setContentsMargins(6, 4, 6, 4)
+        peak_layout.setSpacing(8)
 
-        # ================== Segment Gauge ==================
-        self.compact_controls_layout.addWidget(QLabel("Gauge:"))
+        peak_layout.addWidget(QLabel("Gauge:"))
         self.name_gauge = QLabel("ADD:")
-        self.compact_controls_layout.addWidget(self.name_gauge)
+        peak_layout.addWidget(self.name_gauge)
 
         self.Gauge_type_selector = QComboBox(self)
         self.liste_type_Gauge = ['Ruby', 'Sm', 'SrFCl', 'Rhodamine6G', 'Diamond_c12', 'Diamond_c13']
@@ -367,26 +322,25 @@ class UiLayoutMixin:
         for ind, col in enumerate(self.gauge_colors[:len(self.liste_type_Gauge)]):
             self.Gauge_type_selector.model().item(ind).setBackground(QColor(col))
         self.Gauge_type_selector.currentIndexChanged.connect(self.f_gauge_select)
-        self.compact_controls_layout.addWidget(self.Gauge_type_selector)
+        peak_layout.addWidget(self.Gauge_type_selector)
 
         self.lamb0_entry = QLineEdit()
-        self.lamb0_entry.setMaximumWidth(80)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.lamb0_entry, "λ<sub>0</sub>:"))
+        self.lamb0_entry.setMaximumWidth(90)
+        peak_layout.addLayout(creat_spin_label(self.lamb0_entry, "λ<sub>0</sub>:"))
 
         self.name_spe_entry = QLineEdit()
-        self.name_spe_entry.setMaximumWidth(80)
+        self.name_spe_entry.setMaximumWidth(90)
         self.name_spe_entry.editingFinished.connect(self.f_name_spe)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.name_spe_entry, "G.spe:"))
+        peak_layout.addLayout(creat_spin_label(self.name_spe_entry, "G.spe:"))
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
-        self.compact_controls_layout.addWidget(sep)
+        peak_layout.addWidget(sep)
+        peak_layout.addWidget(QLabel("Model:"))
 
-        # ================== Segment modèle de pic ==================
-        self.compact_controls_layout.addWidget(QLabel("Model:"))
         self.ParampicLayout = QHBoxLayout()
-        self.ParampicLayout.setSpacing(5)
+        self.ParampicLayout.setSpacing(6)
         self.coef_dynamic_spinbox, self.coef_dynamic_label = [], []
         self._coef_dynamic_layouts = []
 
@@ -404,16 +358,47 @@ class UiLayoutMixin:
         self.spinbox_sigma.setRange(0.01, 80)
         self.spinbox_sigma.setSingleStep(0.01)
         self.spinbox_sigma.setValue(0.25)
-        self.spinbox_sigma.setMaximumWidth(75)
+        self.spinbox_sigma.setMaximumWidth(90)
         self.ParampicLayout.addLayout(creat_spin_label(self.spinbox_sigma, "σ:"))
         self.spinbox_sigma.valueChanged.connect(
             lambda _value: self._update_fit_window() if getattr(self, "index_pic_select", None) is not None else None
         )
-        self.compact_controls_layout.addLayout(self.ParampicLayout)
+        controls_layout.addLayout(self.ParampicLayout)
+
+        peak_layout.addLayout(self.ParampicLayout)
+        peak_layout.addStretch(1)
 
         self.bit_bypass = True
         self.f_model_pic_type()
         self.bit_bypass = False
+        self.grid_layout.addWidget(peak_box, 2, 0, 1, 4)
+
+        # ================== Ligne Fit / Multi-fit ==================
+        fit_box = QGroupBox("Fit / Multi-fit")
+        fit_layout = QHBoxLayout(fit_box)
+        fit_layout.setContentsMargins(6, 4, 6, 4)
+        fit_layout.setSpacing(8)
+
+        if hasattr(self, "fit_start_box"):
+            fit_layout.addWidget(self.fit_start_box)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        controls_layout.addWidget(sep)
+
+        # ================== Segment Fit / Multi-fit ==================
+        if hasattr(self, "fit_start_box"):
+            controls_layout.addWidget(self.fit_start_box)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        controls_layout.addWidget(sep)
+
+        # ================== Segment Fit / Multi-fit ==================
+        if hasattr(self, "fit_start_box"):
+            controls_layout.addWidget(self.fit_start_box)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
@@ -429,69 +414,74 @@ class UiLayoutMixin:
         self.spinbox_cycle.setRange(0, 10)
         self.spinbox_cycle.setSingleStep(1)
         self.spinbox_cycle.setValue(1)
-        self.spinbox_cycle.setMaximumWidth(58)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.spinbox_cycle, "cycle:"))
+        self.spinbox_cycle.setMaximumWidth(70)
+        fit_layout.addLayout(creat_spin_label(self.spinbox_cycle, "cycle (Y):"))
 
         self.sigma_pic_fit_entry = QSpinBox()
         self.sigma_pic_fit_entry.valueChanged.connect(self.setFocus)
         self.sigma_pic_fit_entry.setRange(1, 20)
         self.sigma_pic_fit_entry.setSingleStep(1)
         self.sigma_pic_fit_entry.setValue(2)
-        self.sigma_pic_fit_entry.setMaximumWidth(58)
+        self.sigma_pic_fit_entry.setMaximumWidth(70)
         self.sigma_pic_fit_entry.valueChanged.connect(
             lambda _value: self._update_fit_window() if getattr(self, "index_pic_select", None) is not None else None
         )
-        self.compact_controls_layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nbσ:"))
+        fit_layout.addLayout(creat_spin_label(self.sigma_pic_fit_entry, "nb σ (R):"))
 
         self.inter_entry = QDoubleSpinBox()
         self.inter_entry.valueChanged.connect(self.setFocus)
         self.inter_entry.setRange(0.1, 5)
         self.inter_entry.setSingleStep(0.1)
         self.inter_entry.setValue(1)
-        self.inter_entry.setMaximumWidth(62)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.inter_entry, "var%:"))
+        self.inter_entry.setMaximumWidth(70)
+        fit_layout.addLayout(creat_spin_label(self.inter_entry, "var %:"))
 
         self.index_start_entry = QSpinBox()
         self.index_start_entry.setRange(0, 2000)
-        self.index_start_entry.setMaximumWidth(70)
+        self.index_start_entry.setMaximumWidth(80)
         self.index_start_entry.valueChanged.connect(self._on_fit_spin_changed)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.index_start_entry, "start:"))
+        fit_layout.addLayout(creat_spin_label(self.index_start_entry, "start:"))
 
         self.index_stop_entry = QSpinBox()
         self.index_stop_entry.setRange(0, 2000)
         self.index_stop_entry.setValue(10)
-        self.index_stop_entry.setMaximumWidth(70)
+        self.index_stop_entry.setMaximumWidth(80)
         self.index_stop_entry.valueChanged.connect(self._on_fit_spin_changed)
-        self.compact_controls_layout.addLayout(creat_spin_label(self.index_stop_entry, "stop:"))
+        fit_layout.addLayout(creat_spin_label(self.index_stop_entry, "stop:"))
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        fit_layout.addWidget(sep)
 
         self.add_btn = QPushButton("+ zone")
         self.add_btn.clicked.connect(self.add_zone)
-        self.compact_controls_layout.addWidget(self.add_btn)
+        fit_layout.addWidget(self.add_btn)
 
         self.remove_btn = QPushButton("- zone")
         self.remove_btn.clicked.connect(self.dell_zone)
         self.remove_btn.setEnabled(False)
-        self.compact_controls_layout.addWidget(self.remove_btn)
+        fit_layout.addWidget(self.remove_btn)
 
         self.btn_zone_dpdt = QPushButton("Zone dP/dt")
         self.btn_zone_dpdt.setCheckable(True)
         self.btn_zone_dpdt.setChecked(False)
         self.btn_zone_dpdt.toggled.connect(self.set_ddac_multi_zone_visibility)
-        self.compact_controls_layout.addWidget(self.btn_zone_dpdt)
+        fit_layout.addWidget(self.btn_zone_dpdt)
 
         self.chk_multi_fit_fast = QCheckBox("Fast")
         self.chk_multi_fit_fast.setChecked(False)
         self.chk_multi_fit_fast.setToolTip(
             "Accélère le multi-fit en limitant les mises à jour de l'UI Spectrum pendant la boucle."
         )
-        self.compact_controls_layout.addWidget(self.chk_multi_fit_fast)
+        fit_layout.addWidget(self.chk_multi_fit_fast)
 
         self.multi_fit_button = QPushButton("Launch multi fit")
         self.multi_fit_button.clicked.connect(self._CED_multi_fit)
-        self.compact_controls_layout.addWidget(self.multi_fit_button)
-        self.compact_controls_layout.addStretch(1)
+        fit_layout.addWidget(self.multi_fit_button)
+        fit_layout.addStretch(1)
 
-        self.grid_layout.addWidget(controls_box, 2, 0, 1, 3)
+        self.grid_layout.addWidget(fit_box, 3, 0, 1, 4)
 
     def _setup_tab_help_and_commande(self):
         self.tab_help_and_commande = QWidget()
