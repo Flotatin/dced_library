@@ -506,6 +506,16 @@ class MainWindow(
             self.param_filtre_2_name.setText("filtre p2")
 
     def f_model_pic_type(self):
+        # La combobox peut émettre un signal pendant la construction de l'UI.
+        # Si le layout des paramètres de pic n'est pas encore prêt, on sort
+        # proprement au lieu de casser le démarrage de l'application.
+        if not hasattr(self, "ParampicLayout"):
+            return
+        if not hasattr(self, "coef_dynamic_spinbox"):
+            self.coef_dynamic_spinbox = []
+        if not hasattr(self, "coef_dynamic_label"):
+            self.coef_dynamic_label = []
+
         col1 = self.model_pic_type_selector.model().item(
             self.model_pic_type_selector.currentIndex()
         ).background().color().getRgb()
