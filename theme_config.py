@@ -63,6 +63,12 @@ QWidget {
     background-color: ${background};
 }
 
+QToolTip {
+    color: ${text};
+    background-color: ${input_background};
+    border: 1px solid ${accent};
+}
+
 /* GroupBox */
 QGroupBox {
     font-weight: bold;
@@ -105,6 +111,14 @@ QPushButton:hover {
 QPushButton:pressed {
     background-color: ${accent_pressed};
 }
+QPushButton:checked {
+    background-color: ${selection};
+    color: ${selection_text};
+}
+QPushButton:disabled {
+    background-color: ${disabled_background};
+    color: ${disabled_text};
+}
 
 /* Champs de saisie */
 QLineEdit, QSpinBox, QTextEdit ,QDoubleSpinBox{
@@ -116,6 +130,20 @@ QLineEdit, QSpinBox, QTextEdit ,QDoubleSpinBox{
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
     border: 1px solid ${selection};
+}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QTextEdit:disabled {
+    background-color: ${disabled_background};
+    color: ${disabled_text};
+}
+
+QListWidget, QTableWidget, QHeaderView::section {
+    background-color: ${input_background};
+    color: ${text};
+    border: 1px solid ${accent};
+}
+QListWidget::item:selected, QTableWidget::item:selected {
+    background-color: ${selection};
+    color: ${selection_text};
 }
 
 /* Menus et barres de menu */
@@ -149,8 +177,16 @@ QScrollBar::handle:hover {
 QCheckBox, QRadioButton {
     color: ${text};
 }
+QCheckBox::indicator, QRadioButton::indicator {
+    background-color: ${input_background};
+    border: 1px solid ${accent};
+}
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     background-color: ${accent};
+}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    background-color: ${disabled_background};
+    border: 1px solid ${disabled_text};
 }
 
 /* Barres d onglets */
@@ -181,6 +217,8 @@ THEMES = {
         "input_background": "#444444",
         "selection": "#ffaa55",
         "selection_text": "#ffffff",
+        "disabled_background": "#3a3a3a",
+        "disabled_text": "#888888",
         "plot_background": "#333333",
         "axis_pen": "#e0e0e0",
         "grid_alpha": 0.3,
@@ -219,6 +257,8 @@ THEMES = {
         "input_background": "#f6f6f6",
         "selection": "#ffb347",
         "selection_text": "#1e1e1e",
+        "disabled_background": "#dddddd",
+        "disabled_text": "#777777",
         "plot_background": "#f7f7f7",
         "axis_pen": "#1e1e1e",
         "grid_alpha": 0.25,

@@ -242,25 +242,18 @@ class MainWindow(
         self.f_gauge_select()
 
     def toggle_python_kernel(self, checked: bool):
-        """Affiche/cache le kernel Python dans le panneau secondaire compact."""
+        """Affiche/cache le kernel Python sous l'aide, sans remplacer l'aide."""
         if not hasattr(self, "promptBox"):
             return
-        if checked:
-            self.python_kernel_button.blockSignals(True)
-            self.python_kernel_button.setChecked(True)
-            self.python_kernel_button.setText("Hide Python Kernel")
-            self.python_kernel_button.blockSignals(False)
-            self.promptBox.show()
-            if hasattr(self, "_show_secondary_page"):
-                self._show_secondary_page(self.promptBox, "Python Kernel")
-        else:
-            self.python_kernel_button.blockSignals(True)
-            self.python_kernel_button.setChecked(False)
-            self.python_kernel_button.setText("Show Python Kernel")
-            self.python_kernel_button.blockSignals(False)
-            self.promptBox.hide()
-            if getattr(self, "secondary_stack", None) is not None and self.secondary_stack.currentWidget() == self.promptBox:
-                self._hide_secondary_panel()
+
+        self.python_kernel_button.blockSignals(True)
+        self.python_kernel_button.setChecked(bool(checked))
+        self.python_kernel_button.setText("Hide Python Kernel" if checked else "Show Python Kernel")
+        self.python_kernel_button.blockSignals(False)
+
+        self.promptBox.setVisible(bool(checked))
+        if checked and hasattr(self, "_show_secondary_page") and hasattr(self, "tab_help_and_commande"):
+            self._show_secondary_page(self.tab_help_and_commande, "Help & Commande")
 
     # ==================================================================
     # ===============   SETUP MODE POUR DEBUG  =========================
@@ -320,6 +313,8 @@ class MainWindow(
                 row_factors=getattr(self, "_spec_row_factors", None),
                 col_factors=getattr(self, "_spec_col_factors", None),
             )
+            if hasattr(self, "_position_zoom_overlay"):
+                self._position_zoom_overlay()
 
         # dDAC box
         if hasattr(self, "pg_ddac"):
@@ -368,18 +363,21 @@ class MainWindow(
             sys.stdout = old_stdout
     
     def toggle_colonne(self):
-        if self.is_reduced_column_mode==0:
-            self.grid_layout.setColumnStretch(2, 1)
-            self.grid_layout.setColumnStretch(3, 8)
-            self.is_reduced_column_mode=1
-        elif self.is_reduced_column_mode==1:
-            self.grid_layout.setColumnStretch(2, 4)
-            self.grid_layout.setColumnStretch(3, 6)
-            self.is_reduced_column_mode=2
+        """Raccourci P : réduit/restore uniquement la colonne dDAC/Movie.
+
+        Le panneau secondaire (colonne 3) garde son état propre pour éviter que la
+        colonne de droite perturbe le raccourci.
+        """
+        if self.is_reduced_column_mode == 0:
+            self.grid_layout.setColumnStretch(2, 0)
+            if hasattr(self, "DDacBox"):
+                self.DDacBox.setVisible(False)
+            self.is_reduced_column_mode = 1
         else:
-            self.grid_layout.setColumnStretch(2, 8)
-            self.grid_layout.setColumnStretch(3, 1)
-            self.is_reduced_column_mode=0
+            self.grid_layout.setColumnStretch(2, 5)
+            if hasattr(self, "DDacBox"):
+                self.DDacBox.setVisible(True)
+            self.is_reduced_column_mode = 0
 
     def try_command(self,item):
         print("à coder")
