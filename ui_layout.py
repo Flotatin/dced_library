@@ -413,43 +413,13 @@ class UiLayoutMixin:
         self.bit_bypass = True
         self.f_model_pic_type()
         self.bit_bypass = False
-        self.grid_layout.addWidget(peak_box, 2, 0, 1, 4)
+        #self.grid_layout.addWidget(peak_box, 2, 0, 1, 4)
 
         # ================== Ligne Fit / Multi-fit ==================
         fit_box = QGroupBox("Fit / Multi-fit")
         fit_layout = QHBoxLayout(fit_box)
         fit_layout.setContentsMargins(6, 4, 6, 4)
         fit_layout.setSpacing(8)
-
-        if hasattr(self, "fit_start_box"):
-            fit_layout.addWidget(self.fit_start_box)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        controls_layout.addWidget(sep)
-
-        # ================== Segment Fit / Multi-fit ==================
-        if hasattr(self, "fit_start_box"):
-            controls_layout.addWidget(self.fit_start_box)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        controls_layout.addWidget(sep)
-
-        # ================== Segment Fit / Multi-fit ==================
-        if hasattr(self, "fit_start_box"):
-            controls_layout.addWidget(self.fit_start_box)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        self.compact_controls_layout.addWidget(sep)
-
-        # ================== Segment Fit / Multi-fit ==================
-        if hasattr(self, "fit_start_box"):
-            self.compact_controls_layout.addWidget(self.fit_start_box)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
