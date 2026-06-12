@@ -302,11 +302,6 @@ class DdacViewMixin:
         self.spectrum_select_box.setChecked(True)
         controls_layout.addWidget(self.spectrum_select_box)
 
-        self.freeze_phase_box = QCheckBox("figer phases", self)
-        self.freeze_phase_box.setChecked(False)
-        self.freeze_phase_box.toggled.connect(self._on_freeze_phase_toggled)
-        controls_layout.addWidget(self.freeze_phase_box)
-        
         self.dpdt_range_entry = QSpinBox()
         self.dpdt_range_entry.setRange(2, 100)
         self.dpdt_range_entry.setValue(3)
@@ -386,10 +381,10 @@ class DdacViewMixin:
         self.phase_controls_widget.setLayout(phase_layout)
         if hasattr(self, "secondary_stack"):
             self.secondary_stack.addWidget(self.ddac_options_widget)
-            self.secondary_stack.addWidget(self.phase_controls_widget)
         else:
             layout_graphique.addWidget(self.ddac_options_widget)
-            layout_graphique.addWidget(self.phase_controls_widget)
+        layout_graphique.addWidget(self.phase_controls_widget)
+        self.phase_controls_widget.hide()
 
         if hasattr(self, "_populate_ddac_runtime_menu"):
             self._populate_ddac_runtime_menu()
@@ -430,30 +425,26 @@ class DdacViewMixin:
         box_layout = QVBoxLayout()
 
         top_line = QHBoxLayout()
+        self.phase_file_button = QPushButton("Charger éléments...")
+        self.phase_file_button.clicked.connect(self._choose_phase_pattern_file)
+        top_line.addWidget(self.phase_file_button)
+
+        self.phase_template_selector = QComboBox()
+        self.phase_template_selector.setEditable(False)
+        self.phase_template_selector.currentTextChanged.connect(self._on_phase_template_changed)
+        top_line.addWidget(self.phase_template_selector)
+
         self.phase_visible_box = QCheckBox("Afficher phases")
         self.phase_visible_box.setChecked(False)
         self.phase_visible_box.toggled.connect(self._on_phase_visibility_toggled)
         top_line.addWidget(self.phase_visible_box)
 
-        self.phase_element_selector = QComboBox()
-        self.phase_element_selector.setEditable(False)
-        self.phase_element_selector.addItems(sorted(self.phase_patterns.keys()))
-        if self.phase_element_selector.count() == 0:
-            self.phase_element_selector.addItem("H2O")
-        self.phase_element_selector.currentTextChanged.connect(self._on_phase_element_changed)
-        top_line.addWidget(QLabel("Élément"))
-        top_line.addWidget(self.phase_element_selector)
-        box_layout.addLayout(top_line)
+        self.freeze_phase_box = QCheckBox("Figer phases")
+        self.freeze_phase_box.setChecked(False)
+        self.freeze_phase_box.toggled.connect(self._on_freeze_phase_toggled)
+        top_line.addWidget(self.freeze_phase_box)
 
-        template_line = QHBoxLayout()
-        self.phase_template_selector = QComboBox()
-        self.phase_template_selector.setEditable(False)
-        self.phase_template_selector.currentTextChanged.connect(self._on_phase_template_changed)
-        template_line.addWidget(self.phase_template_selector)
-        self.phase_file_button = QPushButton("Charger patterns...")
-        self.phase_file_button.clicked.connect(self._choose_phase_pattern_file)
-        template_line.addWidget(self.phase_file_button)
-        box_layout.addLayout(template_line)
+        box_layout.addLayout(top_line)
 
         btns = QHBoxLayout()
         self.phase_auto_btn = QPushButton("Auto (pression)")
@@ -530,9 +521,23 @@ class DdacViewMixin:
         ]
         return palette[idx % len(palette)]
 
+    def _current_phase_element(self) -> str:
+        """Élément actif pour les phases, sans sélecteur visible dans l'UI."""
+        element = getattr(self, "active_phase_element", "")
+        if not element and getattr(self, "RUN", None) is not None:
+            element = getattr(self.RUN, "active_phase_element", "")
+        if not element:
+            if "H2O" in getattr(self, "phase_patterns", {}):
+                element = "H2O"
+            else:
+                keys = sorted(getattr(self, "phase_patterns", {}).keys())
+                element = keys[0] if keys else "H2O"
+        self.active_phase_element = element
+        return element
+
     def _phase_color_for_name(self, phase_name: str, element: Optional[str] = None):
         if element is None:
-            element = self.phase_element_selector.currentText().strip() if hasattr(self, "phase_element_selector") else "H2O"
+            element = self._current_phase_element()
         ordered_names = self._phase_names_for_element(element) if hasattr(self, "_phase_names_for_element") else []
         if phase_name in ordered_names:
             idx = ordered_names.index(phase_name)
@@ -1058,7 +1063,8 @@ class DdacViewMixin:
         state = state or self._get_state_for_run()
         if state is None or self.RUN is None:
             return
-        state.active_phase_element = self.phase_element_selector.currentText().strip() or "H2O"
+        state.active_phase_element = self._current_phase_element()
+        self.active_phase_element = state.active_phase_element
         setattr(self.RUN, "phase_tracks", copy.deepcopy(state.phase_tracks))
         setattr(self.RUN, "active_phase_element", state.active_phase_element)
 
@@ -1072,12 +1078,7 @@ class DdacViewMixin:
         state.phase_tracks = copy.deepcopy(getattr(self.RUN, "phase_tracks", getattr(state, "phase_tracks", {})))
         state.active_phase_element = getattr(self.RUN, "active_phase_element", state.active_phase_element or "H2O")
 
-        if state.active_phase_element:
-            self.phase_element_selector.blockSignals(True)
-            if self.phase_element_selector.findText(state.active_phase_element) < 0:
-                self.phase_element_selector.addItem(state.active_phase_element)
-            self.phase_element_selector.setCurrentText(state.active_phase_element)
-            self.phase_element_selector.blockSignals(False)
+        self.active_phase_element = state.active_phase_element or self._current_phase_element()
         self._refresh_phase_templates()
         self._refresh_phase_list()
         self._render_phase_regions()
@@ -1089,7 +1090,7 @@ class DdacViewMixin:
         if state is None:
             self.phase_list.blockSignals(False)
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         for zone in zones:
             item = QListWidgetItem(f"{zone['name']} [{zone['start']:.3f}, {zone['end']:.3f}] s")
@@ -1110,7 +1111,7 @@ class DdacViewMixin:
         return [row["phase"] for row in self.phase_patterns.get(element, [])]
 
     def _refresh_phase_templates(self):
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         names = self._phase_names_for_element(element)
         self.phase_template_selector.blockSignals(True)
         self.phase_template_selector.clear()
@@ -1139,7 +1140,7 @@ class DdacViewMixin:
         phase_name = (self.selected_phase_template or "").strip()
         if not phase_name:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         idx = self.phase_list.currentRow()
         if idx < 0:
@@ -1169,13 +1170,9 @@ class DdacViewMixin:
             return
         self.phase_patterns_path = filename
         self.phase_patterns = loaded
-        current_element = self.phase_element_selector.currentText().strip() or "H2O"
-        self.phase_element_selector.blockSignals(True)
-        self.phase_element_selector.clear()
-        self.phase_element_selector.addItems(sorted(self.phase_patterns.keys()))
-        if self.phase_element_selector.findText(current_element) >= 0:
-            self.phase_element_selector.setCurrentText(current_element)
-        self.phase_element_selector.blockSignals(False)
+        current_element = self._current_phase_element()
+        if current_element not in self.phase_patterns:
+            self.active_phase_element = "H2O" if "H2O" in self.phase_patterns else sorted(self.phase_patterns.keys())[0]
         self._refresh_phase_templates()
         self._refresh_phase_list()
         self.text_box_msg.setText(f"Patterns chargés: {os.path.basename(filename)}")
@@ -1195,7 +1192,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         if state is None:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         freeze_phases = bool(getattr(self, "freeze_phase_box", None) and self.freeze_phase_box.isChecked())
 
@@ -1226,18 +1223,6 @@ class DdacViewMixin:
     
     def _on_freeze_phase_toggled(self, _checked):
         self._render_phase_regions()
-
-    def _on_phase_element_changed(self, text):
-        state = self._get_state_for_run()
-        if state is None:
-            return
-        if text and self.phase_element_selector.findText(text) < 0:
-            self.phase_element_selector.addItem(text)
-        state.active_phase_element = text or "H2O"
-        self._refresh_phase_templates()
-        self._refresh_phase_list()
-        self._render_phase_regions()
-        self._sync_phase_state_to_run(state)
 
     def _on_phase_selection_changed(self):
         self.selected_phase_index = self.phase_list.currentRow()
@@ -1272,7 +1257,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         if state is None:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         for idx, zone in enumerate(zones):
             if zone["start"] <= t_value <= zone["end"]:
@@ -1330,7 +1315,7 @@ class DdacViewMixin:
         if not self._ensure_time_pressure_for_phases(state):
             self.text_box_msg.setText("Impossible: pas de données temps/pression pour générer des phases.")
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         patterns = self.phase_patterns.get(element, [])
         if not patterns:
             self.text_box_msg.setText(f"Aucun pattern chargé pour {element}.")
@@ -1407,7 +1392,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         if state is None or len(state.time) == 0:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.setdefault(element, [])
         t0, t1 = float(min(state.time)), float(max(state.time))
         zones.sort(key=lambda z: z["start"])
@@ -1454,7 +1439,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         if state is None:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         idx = self.phase_list.currentRow()
         if idx < 0 or idx >= len(zones):
@@ -1470,7 +1455,7 @@ class DdacViewMixin:
         state = self._get_state_for_run()
         if state is None:
             return
-        element = self.phase_element_selector.currentText().strip() or "H2O"
+        element = self._current_phase_element()
         zones = state.phase_tracks.get(element, [])
         if idx >= len(zones):
             return
@@ -1982,12 +1967,12 @@ class DdacViewMixin:
             # Résultat obsolète (utilisateur a déjà demandé un autre chargement).
             return
         objet_run = payload.get("objet_run")
-        index_file = payload.get("index_file")
-        if objet_run is None or index_file is None:
+        file_key = payload.get("file_key", payload.get("index_file"))
+        if objet_run is None or file_key is None:
             return
 
         run_id = self._get_run_id(objet_run)
-        self.file_index_map[index_file] = run_id
+        self.file_index_map[file_key] = run_id
         self.PRINT_CEDd(item=None, objet_run=objet_run)
 
     def PRINT_CEDd(self, item=None, objet_run=None):
@@ -2012,17 +1997,19 @@ class DdacViewMixin:
         # CAS 1 : on vient d'un clic dans la liste de fichiers (item non None)
         # ------------------------------------------------------------------
         if objet_run is None and item is not None:
-            chemin_fichier = os.path.join(self.dossier_selectionne, item.text())
-            index_file = self.liste_fichiers.row(item)
+            chemin_fichier = item.data(Qt.UserRole) or os.path.join(
+                self.dossier_selectionne, item.text()
+            )
+            file_key = os.path.abspath(chemin_fichier)
 
-            if index_file not in self.file_index_map:
+            if file_key not in self.file_index_map:
                 request_id = int(getattr(self, "_cedd_load_request_counter", 0)) + 1
                 self._cedd_load_request_counter = request_id
                 self._active_cedd_load_request_id = request_id
                 self._submit_background_task(
                     lambda: {
                         "objet_run": CL.LOAD_CEDd(chemin_fichier),
-                        "index_file": index_file,
+                        "file_key": file_key,
                         "request_id": request_id,
                     },
                     result_slot=self._on_cedd_loaded,
@@ -2030,7 +2017,7 @@ class DdacViewMixin:
                 )
                 return
             else:
-                run_id = self.file_index_map[index_file]
+                run_id = self.file_index_map[file_key]
                 state = self.runs.get(run_id)
                 name_select = item.text()
 

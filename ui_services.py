@@ -2,6 +2,7 @@ import logging
 import copy
 import os
 import traceback
+import unicodedata
 from typing import Optional, Any, Dict, List
 
 import pyqtgraph as pg
@@ -14,6 +15,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QTextEdit,
+    QListWidgetItem,
 )
 
 from domain_math import (
@@ -151,11 +153,47 @@ class FileFolderServiceMixin:
             self.dir_label_movie,
         )
 
-    def f_filter_files(self):
-        filter_text = self.search_bar.text().lower()
-        filtered_files = [os.path.basename(f) for f in self.liste_chemins_fichiers if filter_text in os.path.basename(f)]
+    def _normalize_filter_text(self, text: str) -> str:
+        """Normalise une chaîne pour une recherche insensible à la casse/aux accents."""
+        normalized = unicodedata.normalize("NFKD", str(text or ""))
+        without_accents = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        return without_accents.casefold()
+
+    def _file_matches_filter(self, path: str, filter_text: str) -> bool:
+        tokens = [token for token in self._normalize_filter_text(filter_text).split() if token]
+        if not tokens:
+            return True
+        haystack = self._normalize_filter_text(f"{os.path.basename(path)} {path}")
+        return all(token in haystack for token in tokens)
+
+    def _add_cedd_file_item(self, path: str) -> None:
+        item = QListWidgetItem(os.path.basename(path))
+        item.setToolTip(path)
+        item.setData(Qt.UserRole, path)
+        self.liste_fichiers.addItem(item)
+
+    def _refresh_cedd_file_list(self) -> None:
+        if not hasattr(self, "liste_fichiers"):
+            return
+
+        filter_text = self.search_bar.text() if hasattr(self, "search_bar") else ""
+        visible_paths = [
+            path for path in self.liste_chemins_fichiers
+            if self._file_matches_filter(path, filter_text)
+        ]
+
         self.liste_fichiers.clear()
-        self.liste_fichiers.addItems(filtered_files)
+        for path in visible_paths:
+            self._add_cedd_file_item(path)
+
+        if hasattr(self, "statusBar") and filter_text:
+            self.statusBar().showMessage(
+                f"{len(visible_paths)} fichier(s) trouvé(s) pour « {filter_text} »",
+                2500,
+            )
+
+    def f_filter_files(self):
+        self._refresh_cedd_file_list()
 
     def parcourir_dossier(self):
         options = QFileDialog.Options()
@@ -167,9 +205,8 @@ class FileFolderServiceMixin:
                     key=lambda entry: entry.stat().st_ctime_ns,
                     reverse=True,
                 )
-            self.liste_fichiers.clear()
-            self.liste_fichiers.addItems([entry.name for entry in files])
             self.liste_chemins_fichiers = [entry.path for entry in files]
+            self._refresh_cedd_file_list()
 
     def f_select_directory(self, file_name, file_label, name, type_file=".asc"):
         options = QFileDialog.Options()
@@ -1258,4 +1295,4 @@ class RunStateMixin:
 
         self.runs: Dict[str, Any] = {}
         self.current_run_id: Optional[str] = None
-        self.file_index_map: Dict[str, int] = {}
+        self.file_index_map: Dict[str, str] = {}

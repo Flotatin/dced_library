@@ -116,13 +116,25 @@ class SpectrumViewMixin:
         # Zoom incrusté dans le spectre pour libérer l'ancien emplacement dédié.
         self.pg_zoom = pg.PlotWidget(self.pg_spec)
         self.pg_zoom.setFixedSize(280, 180)
-        self.pg_zoom.move(14, 14)
+        self._zoom_overlay_margin = 24
+        self._position_zoom_overlay()
         self.pg_zoom.raise_()
         self._stylize_plot(self.pg_zoom, show_grid=False)
         self.pg_zoom.hideAxis('bottom')
         self.pg_zoom.hideAxis('left')
 
         self._spectra_layout.addWidget(self.spectrum_container)
+
+
+    def _position_zoom_overlay(self) -> None:
+        """Place le zoom incrusté loin de l'axe Y pour ne pas masquer les graduations."""
+        zoom = getattr(self, "pg_zoom", None)
+        host = getattr(self, "pg_spec", None)
+        if zoom is None or host is None:
+            return
+        margin = int(getattr(self, "_zoom_overlay_margin", 24))
+        x = max(margin, host.width() - zoom.width() - margin)
+        zoom.move(x, margin)
 
     def _create_persistent_curves(self) -> None:
         # ================== COURBES PERSISTANTES ==================
@@ -759,6 +771,47 @@ class SpectrumViewMixin:
                 new_items.append(item)
 
         self.gauge_peak_items = new_items
+
+
+    def Apply_all_spectrum_treatment(self):
+        """Applique les paramètres baseline/filtre courants à tous les spectres du RUN."""
+        if getattr(self, "RUN", None) is None or not getattr(self.RUN, "Spectra", None):
+            self.text_box_msg.setText("Aucun CEDd chargé pour Apply all.")
+            return
+
+        deg_baseline, filtre_type, param = self._current_baseline_params()
+        spectra = self.RUN.Spectra
+
+        def _process_all():
+            changed = []
+            for idx, spectrum in enumerate(spectra):
+                if spectrum is None:
+                    continue
+                if self._spectrum_treatment_matches(spectrum, deg_baseline, filtre_type, param):
+                    continue
+                spectrum.Data_treatement(
+                    deg_baseline=deg_baseline,
+                    type_filtre=filtre_type,
+                    param_f=list(param),
+                    print_data=False,
+                )
+                changed.append(idx)
+            return changed
+
+        def _on_all_ready(changed_indices):
+            self.Spectrum = self.RUN.Spectra[self.index_spec]
+            self._on_baseline_ready()
+            if changed_indices:
+                self._corr_summary_for_specs(changed_indices)
+            self.text_box_msg.setText(
+                f"Apply all terminé : {len(changed_indices)} spectre(s) retraité(s)."
+            )
+
+        self._run_spectrum_task(
+            _process_all,
+            description="Apply all baseline/filtre…",
+            result_slot=_on_all_ready,
+        )
 
     def Baseline_spectrum(self):
         deg_baseline, filtre_type, param = self._current_baseline_params()
@@ -1653,6 +1706,19 @@ class SpectrumViewMixin:
         self.name_gauge.setText("In")
         self.name_gauge.setStyleSheet("background-color: green;")
         self._refresh_pic_table()
+
+
+    def on_spec_spinbox_changed(self, value: int):
+        """Charge le spectre demandé depuis un RUN ou depuis le fichier spectro brut."""
+        if getattr(self, "RUN", None) is not None and getattr(self.RUN, "Spectra", None):
+            self.on_spec_index_changed(value)
+            return
+
+        if getattr(self, "data_Spectro", None) is None:
+            return
+        if value < 0 or value >= max(0, self.data_Spectro.shape[1] - 1):
+            return
+        self.CREAT_new_Spectrum()
 
     def on_spec_index_changed(self, value: int):
         """Appelé quand on change l'index de spectre via la spinbox."""
