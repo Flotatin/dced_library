@@ -88,6 +88,8 @@ class ThemeMixin:
                 selection_text=theme["selection_text"],
                 menu_background=theme["menu_background"],
                 button_text=theme["button_text"],
+                disabled_background=theme.get("disabled_background", theme["input_background"]),
+                disabled_text=theme.get("disabled_text", theme["text"]),
             )
         except Exception as exc:
             self._report_warning(f"Failed to build stylesheet: {exc}")
@@ -114,7 +116,8 @@ class ThemeMixin:
             if axis is not None:
                 axis.setPen(axis_pen)
                 axis.setTextPen(text_pen)
-        plot_item.showGrid(x=True, y=True, alpha=theme["grid_alpha"])
+        show_grid = getattr(plot_item, "_cedd_show_grid", True)
+        plot_item.showGrid(x=show_grid, y=show_grid, alpha=theme["grid_alpha"] if show_grid else 0)
 
     def _apply_theme_toggle_state(self):
         if not hasattr(self, "theme_toggle_button"):
@@ -274,8 +277,12 @@ class ThemeMixin:
             plot_item.setLabel("bottom", x_label)
         if y_label:
             plot_item.setLabel("left", y_label)
-        if show_grid:
-            plot_item.showGrid(x=True, y=True, alpha=self._get_theme()["grid_alpha"])
+        plot_item._cedd_show_grid = bool(show_grid)
+        plot_item.showGrid(
+            x=bool(show_grid),
+            y=bool(show_grid),
+            alpha=self._get_theme()["grid_alpha"] if show_grid else 0,
+        )
         plot_item.setMouseEnabled(x=True, y=True)
 
     def _create_marker_line(
